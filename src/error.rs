@@ -47,7 +47,7 @@ pub unsafe fn from_swift(status: i32, error_str: *mut core::ffi::c_char) -> AVCa
         let s = core::ffi::CStr::from_ptr(error_str)
             .to_string_lossy()
             .into_owned();
-        ffi::avc_string_free(error_str);
+        ffi::core::avc_string_free(error_str);
         s
     };
 

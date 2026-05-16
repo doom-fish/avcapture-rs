@@ -2,15 +2,23 @@
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
-use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::device::DeviceInput;
+use crate::audio_data_output::AudioDataOutput;
+use crate::connection::CaptureConnection;
+use crate::device_input::DeviceInput;
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
-use crate::output::{AudioDataOutput, VideoDataOutput};
+use crate::helpers::parse_json_and_free;
+use crate::input::CaptureInputRef;
+use crate::metadata_output::MetadataOutput;
+use crate::movie_file_output::MovieFileOutput;
+use crate::output::CaptureOutputRef;
+use crate::photo_output::PhotoOutput;
+use crate::screen_input::ScreenInput;
+use crate::video_data_output::VideoDataOutput;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,7 +31,8 @@ pub struct CaptureSessionInfo {
 }
 
 /// `AVCaptureSessionPreset` values supported on macOS.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
 #[non_exhaustive]
 pub enum CaptureSessionPreset {
     Photo,
@@ -84,6 +93,18 @@ impl CaptureSessionPreset {
     }
 }
 
+impl From<String> for CaptureSessionPreset {
+    fn from(value: String) -> Self {
+        Self::from_raw(&value)
+    }
+}
+
+impl From<CaptureSessionPreset> for String {
+    fn from(value: CaptureSessionPreset) -> Self {
+        value.as_raw().to_owned()
+    }
+}
+
 /// Safe wrapper around `AVCaptureSession`.
 pub struct CaptureSession {
     ptr: *mut c_void,
@@ -92,7 +113,7 @@ pub struct CaptureSession {
 impl Drop for CaptureSession {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            unsafe { ffi::av_capture_session_release(self.ptr) };
+            unsafe { ffi::session::av_capture_session_release(self.ptr) };
             self.ptr = ptr::null_mut();
         }
     }
@@ -101,7 +122,7 @@ impl Drop for CaptureSession {
 impl CaptureSession {
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::av_capture_session_create(&mut err) };
+        let ptr = unsafe { ffi::session::av_capture_session_create(&mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::SESSION_ERROR, err) });
         }
@@ -110,7 +131,7 @@ impl CaptureSession {
 
     pub fn info(&self) -> Result<CaptureSessionInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr = unsafe { ffi::av_capture_session_info_json(self.ptr, &mut err) };
+        let json_ptr = unsafe { ffi::session::av_capture_session_info_json(self.ptr, &mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::SESSION_ERROR, err) });
         }
@@ -137,99 +158,183 @@ impl CaptureSession {
         Ok(self.info()?.connection_count)
     }
 
+    pub fn connections(&self) -> Result<Vec<CaptureConnection>, AVCaptureError> {
+        let count = unsafe { ffi::session::av_capture_session_connections_count(self.ptr) };
+        let mut connections = Vec::with_capacity(count);
+        for index in 0..count {
+            let mut err: *mut c_char = ptr::null_mut();
+            let ptr = unsafe {
+                ffi::session::av_capture_session_connection_at_index(self.ptr, index, &mut err)
+            };
+            if ptr.is_null() {
+                return Err(unsafe { from_swift(ffi::status::SESSION_ERROR, err) });
+            }
+            connections.push(CaptureConnection::from_raw(ptr));
+        }
+        Ok(connections)
+    }
+
     pub fn begin_configuration(&self) {
-        unsafe { ffi::av_capture_session_begin_configuration(self.ptr) };
+        unsafe { ffi::session::av_capture_session_begin_configuration(self.ptr) };
     }
 
     pub fn commit_configuration(&self) {
-        unsafe { ffi::av_capture_session_commit_configuration(self.ptr) };
+        unsafe { ffi::session::av_capture_session_commit_configuration(self.ptr) };
     }
 
     pub fn start_running(&self) {
-        unsafe { ffi::av_capture_session_start_running(self.ptr) };
+        unsafe { ffi::session::av_capture_session_start_running(self.ptr) };
     }
 
     pub fn stop_running(&self) {
-        unsafe { ffi::av_capture_session_stop_running(self.ptr) };
+        unsafe { ffi::session::av_capture_session_stop_running(self.ptr) };
     }
 
-    pub fn can_set_session_preset(&self, preset: &CaptureSessionPreset) -> Result<bool, AVCaptureError> {
+    pub fn can_set_session_preset(
+        &self,
+        preset: &CaptureSessionPreset,
+    ) -> Result<bool, AVCaptureError> {
         let preset = preset_cstring(preset)?;
-        Ok(unsafe { ffi::av_capture_session_can_set_preset(self.ptr, preset.as_ptr()) })
+        Ok(unsafe { ffi::session::av_capture_session_can_set_preset(self.ptr, preset.as_ptr()) })
     }
 
     pub fn set_session_preset(&self, preset: &CaptureSessionPreset) -> Result<(), AVCaptureError> {
         let preset = preset_cstring(preset)?;
         let mut err: *mut c_char = ptr::null_mut();
-        let status = unsafe { ffi::av_capture_session_set_preset(self.ptr, preset.as_ptr(), &mut err) };
+        let status = unsafe {
+            ffi::session::av_capture_session_set_preset(self.ptr, preset.as_ptr(), &mut err)
+        };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
+    }
+
+    pub fn can_add_input<I: CaptureInputRef>(&self, input: &I) -> bool {
+        unsafe { ffi::session::av_capture_session_can_add_input(self.ptr, input.input_ptr()) }
+    }
+
+    pub fn add_input<I: CaptureInputRef>(&self, input: &I) -> Result<(), AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let status = unsafe {
+            ffi::session::av_capture_session_add_input(self.ptr, input.input_ptr(), &mut err)
+        };
+        if status != ffi::status::OK {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(())
+    }
+
+    pub fn remove_input<I: CaptureInputRef>(&self, input: &I) {
+        unsafe { ffi::session::av_capture_session_remove_input(self.ptr, input.input_ptr()) };
+    }
+
+    pub fn can_add_output<O: CaptureOutputRef>(&self, output: &O) -> bool {
+        unsafe { ffi::session::av_capture_session_can_add_output(self.ptr, output.output_ptr()) }
+    }
+
+    pub fn add_output<O: CaptureOutputRef>(&self, output: &O) -> Result<(), AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let status = unsafe {
+            ffi::session::av_capture_session_add_output(self.ptr, output.output_ptr(), &mut err)
+        };
+        if status != ffi::status::OK {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(())
+    }
+
+    pub fn remove_output<O: CaptureOutputRef>(&self, output: &O) {
+        unsafe { ffi::session::av_capture_session_remove_output(self.ptr, output.output_ptr()) };
     }
 
     pub fn can_add_device_input(&self, input: &DeviceInput) -> bool {
-        unsafe { ffi::av_capture_session_can_add_input(self.ptr, input.ptr) }
+        self.can_add_input(input)
     }
 
     pub fn add_device_input(&self, input: &DeviceInput) -> Result<(), AVCaptureError> {
-        let mut err: *mut c_char = ptr::null_mut();
-        let status = unsafe { ffi::av_capture_session_add_input(self.ptr, input.ptr, &mut err) };
-        if status != ffi::status::OK {
-            return Err(unsafe { from_swift(status, err) });
-        }
-        Ok(())
+        self.add_input(input)
     }
 
     pub fn remove_device_input(&self, input: &DeviceInput) {
-        unsafe { ffi::av_capture_session_remove_input(self.ptr, input.ptr) };
+        self.remove_input(input);
+    }
+
+    pub fn can_add_screen_input(&self, input: &ScreenInput) -> bool {
+        self.can_add_input(input)
+    }
+
+    pub fn add_screen_input(&self, input: &ScreenInput) -> Result<(), AVCaptureError> {
+        self.add_input(input)
+    }
+
+    pub fn remove_screen_input(&self, input: &ScreenInput) {
+        self.remove_input(input);
     }
 
     pub fn can_add_video_data_output(&self, output: &VideoDataOutput) -> bool {
-        unsafe { ffi::av_capture_session_can_add_video_output(self.ptr, output.ptr) }
+        self.can_add_output(output)
     }
 
     pub fn add_video_data_output(&self, output: &VideoDataOutput) -> Result<(), AVCaptureError> {
-        let mut err: *mut c_char = ptr::null_mut();
-        let status = unsafe { ffi::av_capture_session_add_video_output(self.ptr, output.ptr, &mut err) };
-        if status != ffi::status::OK {
-            return Err(unsafe { from_swift(status, err) });
-        }
-        Ok(())
+        self.add_output(output)
     }
 
     pub fn remove_video_data_output(&self, output: &VideoDataOutput) {
-        unsafe { ffi::av_capture_session_remove_video_output(self.ptr, output.ptr) };
+        self.remove_output(output);
     }
 
     pub fn can_add_audio_data_output(&self, output: &AudioDataOutput) -> bool {
-        unsafe { ffi::av_capture_session_can_add_audio_output(self.ptr, output.ptr) }
+        self.can_add_output(output)
     }
 
     pub fn add_audio_data_output(&self, output: &AudioDataOutput) -> Result<(), AVCaptureError> {
-        let mut err: *mut c_char = ptr::null_mut();
-        let status = unsafe { ffi::av_capture_session_add_audio_output(self.ptr, output.ptr, &mut err) };
-        if status != ffi::status::OK {
-            return Err(unsafe { from_swift(status, err) });
-        }
-        Ok(())
+        self.add_output(output)
     }
 
     pub fn remove_audio_data_output(&self, output: &AudioDataOutput) {
-        unsafe { ffi::av_capture_session_remove_audio_output(self.ptr, output.ptr) };
+        self.remove_output(output);
+    }
+
+    pub fn can_add_photo_output(&self, output: &PhotoOutput) -> bool {
+        self.can_add_output(output)
+    }
+
+    pub fn add_photo_output(&self, output: &PhotoOutput) -> Result<(), AVCaptureError> {
+        self.add_output(output)
+    }
+
+    pub fn remove_photo_output(&self, output: &PhotoOutput) {
+        self.remove_output(output);
+    }
+
+    pub fn can_add_movie_file_output(&self, output: &MovieFileOutput) -> bool {
+        self.can_add_output(output)
+    }
+
+    pub fn add_movie_file_output(&self, output: &MovieFileOutput) -> Result<(), AVCaptureError> {
+        self.add_output(output)
+    }
+
+    pub fn remove_movie_file_output(&self, output: &MovieFileOutput) {
+        self.remove_output(output);
+    }
+
+    pub fn can_add_metadata_output(&self, output: &MetadataOutput) -> bool {
+        self.can_add_output(output)
+    }
+
+    pub fn add_metadata_output(&self, output: &MetadataOutput) -> Result<(), AVCaptureError> {
+        self.add_output(output)
+    }
+
+    pub fn remove_metadata_output(&self, output: &MetadataOutput) {
+        self.remove_output(output);
     }
 }
 
 fn preset_cstring(preset: &CaptureSessionPreset) -> Result<CString, AVCaptureError> {
-    CString::new(preset.as_raw())
-        .map_err(|error| AVCaptureError::InvalidArgument(format!("preset contains NUL byte: {error}")))
-}
-
-fn parse_json_and_free<T: DeserializeOwned>(json_ptr: *mut c_char) -> Result<T, AVCaptureError> {
-    let json = unsafe { CStr::from_ptr(json_ptr) }
-        .to_string_lossy()
-        .into_owned();
-    unsafe { ffi::avc_string_free(json_ptr) };
-    serde_json::from_str::<T>(&json)
-        .map_err(|error| AVCaptureError::OperationFailed(format!("failed to decode bridge JSON: {error}")))
+    CString::new(preset.as_raw()).map_err(|error| {
+        AVCaptureError::InvalidArgument(format!("preset contains NUL byte: {error}"))
+    })
 }

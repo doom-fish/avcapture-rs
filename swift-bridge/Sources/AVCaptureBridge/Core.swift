@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -21,7 +22,46 @@ public typealias AVCAudioSampleCallback = @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafeMutableRawPointer?
 ) -> Void
+public typealias AVCJsonCallback = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafeMutablePointer<CChar>?
+) -> Void
 public typealias AVCDropCallback = @convention(c) (UnsafeMutableRawPointer?) -> Void
+
+final class AVCJsonCallbackBox {
+    let callback: AVCJsonCallback
+    let userData: UnsafeMutableRawPointer?
+    let dropUserData: AVCDropCallback?
+    private var disposed = false
+
+    init(
+        callback: @escaping AVCJsonCallback,
+        userData: UnsafeMutableRawPointer?,
+        dropUserData: AVCDropCallback?
+    ) {
+        self.callback = callback
+        self.userData = userData
+        self.dropUserData = dropUserData
+    }
+
+    func emit<T: Encodable>(_ payload: T) {
+        guard !disposed,
+              let json = try? avcEncodeJSON(payload),
+              let payloadPtr = ffiString(json)
+        else {
+            return
+        }
+        callback(userData, payloadPtr)
+    }
+
+    func dispose() {
+        guard !disposed else { return }
+        disposed = true
+        if let userData, let dropUserData {
+            dropUserData(userData)
+        }
+    }
+}
 
 @_cdecl("avc_string_free")
 public func avc_string_free(_ str: UnsafeMutablePointer<CChar>?) {
@@ -44,6 +84,133 @@ enum BridgeError: LocalizedError {
     }
 }
 
+final class SessionBox: NSObject {
+    let session = AVCaptureSession()
+}
+
+final class DeviceBox: NSObject {
+    let device: AVCaptureDevice
+
+    init(_ device: AVCaptureDevice) {
+        self.device = device
+    }
+}
+
+final class DeviceFormatBox: NSObject {
+    let format: AVCaptureDevice.Format
+
+    init(_ format: AVCaptureDevice.Format) {
+        self.format = format
+    }
+}
+
+final class ConnectionBox: NSObject {
+    let connection: AVCaptureConnection
+
+    init(_ connection: AVCaptureConnection) {
+        self.connection = connection
+    }
+}
+
+final class DiscoverySessionBox: NSObject {
+    let session: AVCaptureDevice.DiscoverySession
+
+    init(_ session: AVCaptureDevice.DiscoverySession) {
+        self.session = session
+    }
+}
+
+class CaptureInputBoxBase: NSObject {
+    var input: AVCaptureInput {
+        fatalError("CaptureInputBoxBase.input must be overridden")
+    }
+}
+
+class CaptureOutputBoxBase: NSObject {
+    var output: AVCaptureOutput {
+        fatalError("CaptureOutputBoxBase.output must be overridden")
+    }
+}
+
+func avcRetain<T: AnyObject>(_ value: T) -> UnsafeMutableRawPointer {
+    Unmanaged.passRetained(value).toOpaque()
+}
+
+func avcRelease<T: AnyObject>(_ ptr: UnsafeMutableRawPointer?, as type: T.Type) {
+    guard let ptr else { return }
+    Unmanaged<T>.fromOpaque(ptr).release()
+}
+
+func avcUnretained<T: AnyObject>(_ ptr: UnsafeMutableRawPointer, as type: T.Type) -> T {
+    Unmanaged<T>.fromOpaque(ptr).takeUnretainedValue()
+}
+
+func avcSessionBox(_ ptr: UnsafeMutableRawPointer) -> SessionBox {
+    avcUnretained(ptr, as: SessionBox.self)
+}
+
+func avcDeviceBox(_ ptr: UnsafeMutableRawPointer) -> DeviceBox {
+    avcUnretained(ptr, as: DeviceBox.self)
+}
+
+func avcDeviceFormatBox(_ ptr: UnsafeMutableRawPointer) -> DeviceFormatBox {
+    avcUnretained(ptr, as: DeviceFormatBox.self)
+}
+
+func avcConnectionBox(_ ptr: UnsafeMutableRawPointer) -> ConnectionBox {
+    avcUnretained(ptr, as: ConnectionBox.self)
+}
+
+func avcDiscoverySessionBox(_ ptr: UnsafeMutableRawPointer) -> DiscoverySessionBox {
+    avcUnretained(ptr, as: DiscoverySessionBox.self)
+}
+
+func avcInputBox(_ ptr: UnsafeMutableRawPointer) -> CaptureInputBoxBase {
+    avcUnretained(ptr, as: CaptureInputBoxBase.self)
+}
+
+func avcOutputBox(_ ptr: UnsafeMutableRawPointer) -> CaptureOutputBoxBase {
+    avcUnretained(ptr, as: CaptureOutputBoxBase.self)
+}
+
+struct CMTimePayload: Codable {
+    let value: Int64
+    let timescale: Int32
+    let flags: UInt32
+    let epoch: Int64
+
+    init(_ time: CMTime) {
+        value = time.value
+        timescale = time.timescale
+        flags = time.flags.rawValue
+        epoch = time.epoch
+    }
+}
+
+struct CaptureRectPayload: Codable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+
+    init(_ rect: CGRect) {
+        x = rect.origin.x
+        y = rect.origin.y
+        width = rect.size.width
+        height = rect.size.height
+    }
+}
+
+struct VideoDimensionsPayload: Codable {
+    let width: Int32
+    let height: Int32
+
+    init(_ dimensions: CMVideoDimensions) {
+        width = dimensions.width
+        height = dimensions.height
+    }
+}
+
 struct CaptureDeviceInfoPayload: Codable {
     let uniqueId: String
     let localizedName: String
@@ -62,6 +229,20 @@ struct CaptureSessionInfoPayload: Codable {
     let outputCount: Int
     let connectionCount: Int
     let isRunning: Bool
+}
+
+struct CaptureInputPortInfoPayload: Codable {
+    let mediaType: String
+    let enabled: Bool
+    let hasFormatDescription: Bool
+}
+
+struct CaptureInputInfoPayload: Codable {
+    let ports: [CaptureInputPortInfoPayload]
+}
+
+struct CaptureOutputInfoPayload: Codable {
+    let connectionCount: Int
 }
 
 struct VideoOutputSettingsPayload: Codable {
@@ -265,4 +446,19 @@ func avcEncodeAudioSettings(_ settings: [String: Any]?) -> AudioOutputSettingsPa
         isFloat: isFloat,
         isNonInterleaved: isNonInterleaved
     )
+}
+
+func avcFourCCString(_ code: FourCharCode) -> String {
+    let bytes = [
+        UInt8((code >> 24) & 0xFF),
+        UInt8((code >> 16) & 0xFF),
+        UInt8((code >> 8) & 0xFF),
+        UInt8(code & 0xFF),
+    ]
+    let printable = bytes.allSatisfy { $0 >= 32 && $0 < 127 }
+    if printable {
+        let scalarValues = bytes.map { Character(UnicodeScalar($0)) }
+        return String(scalarValues)
+    }
+    return String(format: "0x%08X", code)
 }

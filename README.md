@@ -1,14 +1,25 @@
 # avcapture-rs
 
-Safe Rust bindings for Apple's `AVCaptureSession`, `AVCaptureDeviceInput`, `AVCaptureVideoDataOutput`, and `AVCaptureAudioDataOutput` on macOS.
+Safe Rust bindings for Apple's `AVCapture` stack on macOS.
 
-## Features
+## 0.2.0 highlights
 
-- Build and inspect `AVCaptureSession` graphs from Rust.
-- Enumerate capture devices and read camera / microphone authorization status.
-- Create `AVCaptureDeviceInput`s from discovered devices.
-- Configure `AVCaptureVideoDataOutput` and `AVCaptureAudioDataOutput` settings.
-- Receive live sample buffers as `apple-cf` `CMSampleBuffer` / `CVPixelBuffer` wrappers.
+- `AVCaptureDevice` enumeration, authorization, lookup, format inspection, and configuration locking.
+- `AVCaptureDeviceDiscoverySession` wrappers for type/media/position-based discovery.
+- `AVCaptureDeviceInput`, `AVCaptureScreenInput`, and generic input/port inspection.
+- `AVCaptureSession` presets plus session-level `AVCaptureConnection` inspection.
+- Generic output inspection plus `AVCaptureConnection` enable/mirroring/rotation controls.
+- `AVCaptureVideoDataOutput` and `AVCaptureAudioDataOutput` with Rust closure callbacks.
+- `AVCapturePhotoOutput`, `AVCaptureMovieFileOutput`, and `AVCaptureMetadataOutput` inspection/configuration surfaces plus delegate-to-closure callback bridges.
+- Headless-safe numbered examples and per-area tests.
+
+See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
+
+## Installation
+
+```bash
+cargo add avcapture
+```
 
 ## Example
 
@@ -17,34 +28,43 @@ use avcapture::prelude::*;
 
 fn main() -> Result<(), AVCaptureError> {
     let session = CaptureSession::new()?;
-    session.begin_configuration();
-    session.set_session_preset(&CaptureSessionPreset::High)?;
-
     let video_output = VideoDataOutput::new()?;
-    video_output.set_video_settings(Some(&VideoOutputSettings::bgra()))?;
-    video_output.set_sample_buffer_handler(Some("capture-video"), |sample, pixel_buffer| {
-        println!("video samples: {}", sample.num_samples());
-        if let Some(pixel_buffer) = pixel_buffer {
-            println!("pixel buffer: {}x{}", pixel_buffer.width(), pixel_buffer.height());
-        }
-    })?;
+    video_output.set_video_settings(Some(&VideoOutputSettings::bgra().with_dimensions(1280, 720)))?;
 
+    session.begin_configuration();
+    if session.can_set_session_preset(&CaptureSessionPreset::High)? {
+        session.set_session_preset(&CaptureSessionPreset::High)?;
+    }
     if session.can_add_video_data_output(&video_output) {
         session.add_video_data_output(&video_output)?;
     }
-
     session.commit_configuration();
+
+    println!("session info: {:?}", session.info()?);
     Ok(())
 }
 ```
 
-## Smoke test
+## Headless-safe examples
 
-```bash
-cargo run --all-features --example 01_smoke_surface
-```
+These examples intentionally avoid `startRunning`, and only invoke photo/movie capture APIs through guarded paths that return descriptive errors when the outputs are not attached to a running session. They should still exit `0` on machines without camera/microphone permissions or capture hardware.
 
-The smoke example intentionally avoids starting capture or opening device inputs, so it should not trigger camera or microphone permission prompts.
+- `cargo run --example 01_smoke_surface`
+- `cargo run --example 02_device_discovery_session`
+- `cargo run --example 03_device_formats`
+- `cargo run --example 04_device_input_ports`
+- `cargo run --example 05_screen_input`
+- `cargo run --example 06_session_connections`
+- `cargo run --example 07_data_outputs`
+- `cargo run --example 08_photo_output`
+- `cargo run --example 09_movie_file_output`
+- `cargo run --example 10_metadata_output`
+
+## Notes
+
+- `MetadataOutput::new()` requires macOS 13.0 or newer at runtime.
+- `PhotoOutput` capability arrays are often empty until the output is attached to a session with a video source.
+- `MovieFileOutput` recording controls and callbacks are exposed, but the bundled examples intentionally stop short of running a session and writing files.
 
 ## License
 

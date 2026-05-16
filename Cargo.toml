@@ -1,11 +1,11 @@
 [package]
 name = "avcapture"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/doom-fish/avcapture-rs"
 repository = "https://github.com/doom-fish/avcapture-rs"
-description = "Safe Rust bindings for Apple's AVCaptureSession + data outputs — configure camera/mic capture graphs on macOS"
+description = "Safe Rust bindings for Apple's AVCapture devices, sessions, inputs, connections, and capture outputs on macOS"
 authors = ["Per Johansson <per@doom.fish>"]
 keywords = ["avcapture", "avfoundation", "camera", "microphone", "macos"]
 categories = ["multimedia::video", "multimedia::audio", "api-bindings", "os::macos-apis"]
@@ -23,6 +23,7 @@ include = [
     "README.md",
     "LICENSE-*",
     "CHANGELOG.md",
+    "COVERAGE.md",
 ]
 
 [lints.rust]
