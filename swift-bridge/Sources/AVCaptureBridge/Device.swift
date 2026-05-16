@@ -14,9 +14,18 @@ private struct CaptureDeviceDetailsPayload: Codable {
     let hasTorch: Bool
     let torchAvailable: Bool
     let torchLevel: Float?
+    let exposureMode: Int32?
     let formatsCount: Int
     let activeVideoMinFrameDuration: CMTimePayload
     let activeVideoMaxFrameDuration: CMTimePayload
+}
+
+private func avcSupportedExposureModes(for device: AVCaptureDevice) -> [AVCaptureDevice.ExposureMode] {
+    var modes: [AVCaptureDevice.ExposureMode] = [.locked, .autoExpose, .continuousAutoExposure]
+    if #available(macOS 10.15, *) {
+        modes.append(.custom)
+    }
+    return modes.filter { device.isExposureModeSupported($0) }
 }
 
 private func avcDeviceInfoPayload(from device: AVCaptureDevice) -> CaptureDeviceInfoPayload {
@@ -32,6 +41,7 @@ private func avcDeviceDetailsPayload(from device: AVCaptureDevice) -> CaptureDev
     let mediaTypes = knownMediaTypes
         .filter { device.hasMediaType($0) }
         .map(avcEncodeMediaType)
+    let supportedExposureModes = avcSupportedExposureModes(for: device)
     return CaptureDeviceDetailsPayload(
         uniqueId: device.uniqueID,
         localizedName: device.localizedName,
@@ -45,6 +55,7 @@ private func avcDeviceDetailsPayload(from device: AVCaptureDevice) -> CaptureDev
         hasTorch: device.hasTorch,
         torchAvailable: device.isTorchAvailable,
         torchLevel: device.hasTorch ? Float(device.torchLevel) : nil,
+        exposureMode: supportedExposureModes.isEmpty ? nil : Int32(device.exposureMode.rawValue),
         formatsCount: device.formats.count,
         activeVideoMinFrameDuration: CMTimePayload(device.activeVideoMinFrameDuration),
         activeVideoMaxFrameDuration: CMTimePayload(device.activeVideoMaxFrameDuration)
@@ -226,6 +237,17 @@ public func av_capture_device_active_video_max_frame_duration(_ devicePtr: Unsaf
     avcDeviceBox(devicePtr).device.activeVideoMaxFrameDuration
 }
 
+@_cdecl("av_capture_device_is_exposure_mode_supported")
+public func av_capture_device_is_exposure_mode_supported(
+    _ devicePtr: UnsafeMutableRawPointer,
+    _ modeRaw: Int32
+) -> Bool {
+    guard let mode = AVCaptureDevice.ExposureMode(rawValue: Int(modeRaw)) else {
+        return false
+    }
+    return avcDeviceBox(devicePtr).device.isExposureModeSupported(mode)
+}
+
 @_cdecl("av_capture_device_lock_for_configuration")
 public func av_capture_device_lock_for_configuration(
     _ devicePtr: UnsafeMutableRawPointer,
@@ -277,6 +299,25 @@ public func av_capture_device_set_active_video_max_frame_duration(
 ) -> Int32 {
     let device = avcDeviceBox(devicePtr).device
     device.activeVideoMaxFrameDuration = duration
+    return AVC_OK
+}
+
+@_cdecl("av_capture_device_set_exposure_mode")
+public func av_capture_device_set_exposure_mode(
+    _ devicePtr: UnsafeMutableRawPointer,
+    _ modeRaw: Int32,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    let device = avcDeviceBox(devicePtr).device
+    guard let mode = AVCaptureDevice.ExposureMode(rawValue: Int(modeRaw)) else {
+        outErrorMessage?.pointee = ffiString("unsupported exposure mode: \(modeRaw)")
+        return AVC_INVALID_ARGUMENT
+    }
+    guard device.isExposureModeSupported(mode) else {
+        outErrorMessage?.pointee = ffiString("device does not support exposure mode \(modeRaw)")
+        return AVC_DEVICE_ERROR
+    }
+    device.exposureMode = mode
     return AVC_OK
 }
 

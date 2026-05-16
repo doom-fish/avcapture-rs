@@ -2,15 +2,14 @@
 
 Safe Rust bindings for Apple's `AVCapture` stack on macOS.
 
-## 0.2.0 highlights
+## 0.2.1 highlights
 
-- `AVCaptureDevice` enumeration, authorization, lookup, format inspection, and configuration locking.
+- `AVCaptureDevice` enumeration, authorization, lookup, format inspection, configuration locking, and typed exposure / flash / torch modes.
 - `AVCaptureDeviceDiscoverySession` wrappers for type/media/position-based discovery.
-- `AVCaptureDeviceInput`, `AVCaptureScreenInput`, and generic input/port inspection.
+- `AVCaptureDeviceInput`, `AVCaptureScreenInput`, generic input/port inspection, and `AVCaptureVideoPreviewLayer` preview inspection.
 - `AVCaptureSession` presets plus session-level `AVCaptureConnection` inspection.
-- Generic output inspection plus `AVCaptureConnection` enable/mirroring/rotation controls.
 - `AVCaptureVideoDataOutput` and `AVCaptureAudioDataOutput` with Rust closure callbacks.
-- `AVCapturePhotoOutput`, `AVCaptureMovieFileOutput`, and `AVCaptureMetadataOutput` inspection/configuration surfaces plus delegate-to-closure callback bridges.
+- `AVCapturePhotoOutput`, `PhotoSettings`, `Photo`, `PhotoQualityPrioritization`, `AVCaptureMovieFileOutput`, and `AVCaptureMetadataOutput` wrappers plus delegate-to-closure callback bridges.
 - Headless-safe numbered examples and per-area tests.
 
 See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
@@ -59,11 +58,14 @@ These examples intentionally avoid `startRunning`, and only invoke photo/movie c
 - `cargo run --example 08_photo_output`
 - `cargo run --example 09_movie_file_output`
 - `cargo run --example 10_metadata_output`
+- `cargo run --example 11_video_preview_layer`
 
 ## Notes
 
 - `MetadataOutput::new()` requires macOS 13.0 or newer at runtime.
 - `PhotoOutput` capability arrays are often empty until the output is attached to a session with a video source.
+- `PhotoSettings` flash-mode and quality-prioritization controls require macOS 13.0 or newer at runtime.
+- `VideoPreviewLayer` may not expose a connection until its session has an eligible video input.
 - `MovieFileOutput` recording controls and callbacks are exposed, but the bundled examples intentionally stop short of running a session and writing files.
 
 ## License

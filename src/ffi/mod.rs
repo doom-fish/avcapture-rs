@@ -25,10 +25,12 @@ pub mod input;
 pub mod metadata_output;
 pub mod movie_file_output;
 pub mod output;
+pub mod photo;
 pub mod photo_output;
 pub mod screen_input;
 pub mod session;
 pub mod video_data_output;
+pub mod video_preview_layer;
 
 pub mod status {
     pub const OK: i32 = 0;

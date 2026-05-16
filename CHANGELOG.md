@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Added `CaptureExposureMode` plus `AVCapturePhotoSettings` / `AVCapturePhoto` wrappers and settings-based photo capture.
+- Added `PhotoQualityPrioritization` support on `PhotoOutput` and `PhotoSettings`.
+- Added a safe `VideoPreviewLayer` wrapper with preview-layer inspection and video-gravity control.
+- Added headless-safe preview-layer example/test coverage and refreshed audit/coverage documentation.
+
 ## 0.2.0
 
 - Split the Swift bridge and Rust FFI into per-area modules.

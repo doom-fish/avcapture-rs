@@ -13,6 +13,11 @@ fn main() -> support::ExampleResult {
         "supports session preset high: {}",
         device.supports_session_preset(&CaptureSessionPreset::High)?
     );
+    println!("current exposure mode: {:?}", device.exposure_mode()?);
+    println!(
+        "supports continuous auto exposure: {}",
+        device.is_exposure_mode_supported(CaptureExposureMode::ContinuousAutoExposure)
+    );
 
     let formats = device.formats()?;
     println!("format count: {}", formats.len());

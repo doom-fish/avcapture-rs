@@ -107,7 +107,7 @@ impl From<CaptureSessionPreset> for String {
 
 /// Safe wrapper around `AVCaptureSession`.
 pub struct CaptureSession {
-    ptr: *mut c_void,
+    pub(crate) ptr: *mut c_void,
 }
 
 impl Drop for CaptureSession {

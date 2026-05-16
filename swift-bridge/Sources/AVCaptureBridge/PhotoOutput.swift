@@ -10,6 +10,7 @@ struct PhotoOutputInfoPayload: Codable {
     let supportedFlashModes: [Int32]
     let maxPhotoDimensions: VideoDimensionsPayload?
     let captureReadiness: Int32?
+    let maxPhotoQualityPrioritization: Int32?
     let highResolutionCaptureEnabled: Bool
     let responsiveCaptureEnabled: Bool?
     let callbackInstalled: Bool
@@ -29,6 +30,14 @@ private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegat
 
     func photoOutput(
         _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        owner?.recordProcessedPhoto(photo, error: error)
+    }
+
+    func photoOutput(
+        _ output: AVCapturePhotoOutput,
         didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
         error: Error?
     ) {
@@ -39,7 +48,9 @@ private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegat
 final class PhotoOutputBox: CaptureOutputBoxBase {
     let photoOutput = AVCapturePhotoOutput()
     fileprivate var captureDelegate: PhotoCaptureDelegate?
-    fileprivate var callbackBox: AVCJsonCallbackBox?
+    fileprivate var callbackBox: AVCPhotoCallbackBox?
+    fileprivate var processedPhoto: AVCapturePhoto?
+    fileprivate var processingError: Error?
 
     override var output: AVCaptureOutput {
         photoOutput
@@ -73,6 +84,12 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
         } else {
             captureReadiness = nil
         }
+        let maxPhotoQualityPrioritization: Int32?
+        if #available(macOS 13.0, *) {
+            maxPhotoQualityPrioritization = Int32(photoOutput.maxPhotoQualityPrioritization.rawValue)
+        } else {
+            maxPhotoQualityPrioritization = nil
+        }
         let responsiveCaptureEnabled: Bool?
         if #available(macOS 14.0, *) {
             responsiveCaptureEnabled = photoOutput.isResponsiveCaptureEnabled
@@ -92,6 +109,7 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
             supportedFlashModes: supportedFlashModes,
             maxPhotoDimensions: maxPhotoDimensions,
             captureReadiness: captureReadiness,
+            maxPhotoQualityPrioritization: maxPhotoQualityPrioritization,
             highResolutionCaptureEnabled: photoOutput.isHighResolutionCaptureEnabled,
             responsiveCaptureEnabled: responsiveCaptureEnabled,
             callbackInstalled: callbackBox != nil
@@ -99,7 +117,8 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
     }
 
     fileprivate func capturePhoto(
-        callback: @escaping AVCJsonCallback,
+        settingsPtr: UnsafeMutableRawPointer,
+        callback: @escaping AVCPhotoCallback,
         userData: UnsafeMutableRawPointer?,
         dropUserData: AVCDropCallback?
     ) throws {
@@ -113,19 +132,36 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
             throw BridgeError.message("photo output has no video-capable connection")
         }
 
-        callbackBox = AVCJsonCallbackBox(callback: callback, userData: userData, dropUserData: dropUserData)
+        processedPhoto = nil
+        processingError = nil
+        callbackBox = AVCPhotoCallbackBox(callback: callback, userData: userData, dropUserData: dropUserData)
         let delegate = PhotoCaptureDelegate(owner: self)
         captureDelegate = delegate
-        photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: delegate)
+        photoOutput.capturePhoto(with: avcPhotoSettingsBox(settingsPtr).settings, delegate: delegate)
+    }
+
+    fileprivate func recordProcessedPhoto(_ photo: AVCapturePhoto, error: Error?) {
+        processedPhoto = photo
+        if let error {
+            processingError = error
+        }
     }
 
     fileprivate func completeCapture(uniqueId: Int64, error: Error?) {
-        callbackBox?.emit(PhotoCaptureResultPayload(uniqueId: uniqueId, error: error?.localizedDescription))
+        callbackBox?.emit(
+            processedPhoto,
+            payload: PhotoCaptureResultPayload(
+                uniqueId: uniqueId,
+                error: (error ?? processingError)?.localizedDescription
+            )
+        )
         clearCaptureState()
     }
 
     fileprivate func clearCaptureState() {
         captureDelegate = nil
+        processedPhoto = nil
+        processingError = nil
         callbackBox?.dispose()
         callbackBox = nil
     }
@@ -165,6 +201,25 @@ public func av_capture_photo_output_set_high_resolution_capture_enabled(
     avcUnretained(outputPtr, as: PhotoOutputBox.self).photoOutput.isHighResolutionCaptureEnabled = enabled
 }
 
+@_cdecl("av_capture_photo_output_set_max_photo_quality_prioritization")
+public func av_capture_photo_output_set_max_photo_quality_prioritization(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ prioritizationRaw: Int32,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    let photoOutput = avcUnretained(outputPtr, as: PhotoOutputBox.self).photoOutput
+    guard #available(macOS 13.0, *) else {
+        outErrorMessage?.pointee = ffiString("photo quality prioritization requires macOS 13.0 or newer")
+        return AVC_OUTPUT_ERROR
+    }
+    guard let prioritization = AVCapturePhotoOutput.QualityPrioritization(rawValue: Int(prioritizationRaw)) else {
+        outErrorMessage?.pointee = ffiString("unsupported photo quality prioritization: \(prioritizationRaw)")
+        return AVC_INVALID_ARGUMENT
+    }
+    photoOutput.maxPhotoQualityPrioritization = prioritization
+    return AVC_OK
+}
+
 @_cdecl("av_capture_photo_output_set_responsive_capture_enabled")
 public func av_capture_photo_output_set_responsive_capture_enabled(
     _ outputPtr: UnsafeMutableRawPointer,
@@ -187,7 +242,8 @@ public func av_capture_photo_output_set_responsive_capture_enabled(
 @_cdecl("av_capture_photo_output_capture_photo")
 public func av_capture_photo_output_capture_photo(
     _ outputPtr: UnsafeMutableRawPointer,
-    _ callback: AVCJsonCallback?,
+    _ settingsPtr: UnsafeMutableRawPointer,
+    _ callback: AVCPhotoCallback?,
     _ userData: UnsafeMutableRawPointer?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
@@ -198,7 +254,12 @@ public func av_capture_photo_output_capture_photo(
     }
     let output = avcUnretained(outputPtr, as: PhotoOutputBox.self)
     do {
-        try output.capturePhoto(callback: callback, userData: userData, dropUserData: dropUserData)
+        try output.capturePhoto(
+            settingsPtr: settingsPtr,
+            callback: callback,
+            userData: userData,
+            dropUserData: dropUserData
+        )
         return AVC_OK
     } catch {
         outErrorMessage?.pointee = ffiString(error.localizedDescription)

@@ -3,10 +3,10 @@
 Scope: top-level symbols from `AVCapture*.h` only (`@interface`, `@protocol`, typedef enums/structs, exported constants, and top-level C functions). Deprecated or `API_UNAVAILABLE(macos)` symbols are EXEMPT. Delegate protocols are counted as VERIFIED when `avcapture-rs` exposes an equivalent Rust callback surface.
 
 SDK_PUBLIC_SYMBOLS: 112
-VERIFIED: 43
-GAPS: 69
+VERIFIED: 48
+GAPS: 64
 EXEMPT: 65
-COVERAGE_PCT: 38.4%
+COVERAGE_PCT: 42.9%
 
 ## 🟢 VERIFIED
 | Symbol | Kind | Header | Wrapped by |
@@ -22,6 +22,7 @@ COVERAGE_PCT: 38.4%
 | AVCaptureDeviceTypeDeskViewCamera | constant | AVCaptureDevice.h | CaptureDeviceType::DeskViewCamera |
 | AVCaptureDeviceTypeExternal | constant | AVCaptureDevice.h | CaptureDeviceType::External |
 | AVCaptureDeviceTypeMicrophone | constant | AVCaptureDevice.h | CaptureDeviceType::Microphone |
+| AVCaptureExposureMode | enum | AVCaptureDevice.h | CaptureExposureMode / CaptureDevice::{details, exposure_mode, is_exposure_mode_supported} / CaptureDeviceConfigurationLock::set_exposure_mode |
 | AVCaptureFlashMode | enum | AVCaptureDevice.h | CaptureFlashMode |
 | AVCaptureTorchMode | enum | AVCaptureDevice.h | CaptureTorchMode |
 | AVCaptureFileOutput | interface | AVCaptureFileOutput.h | MovieFileOutput (base recording properties/methods) |
@@ -37,6 +38,9 @@ COVERAGE_PCT: 38.4%
 | AVCapturePhotoCaptureDelegate | protocol | AVCapturePhotoOutput.h | PhotoOutput::capture_photo |
 | AVCapturePhotoOutput | interface | AVCapturePhotoOutput.h | PhotoOutput / PhotoOutputInfo |
 | AVCapturePhotoOutputCaptureReadiness | enum | AVCapturePhotoOutput.h | PhotoOutput::capture_readiness / PhotoOutputInfo::capture_readiness (raw i32) |
+| AVCapturePhoto | interface | AVCapturePhotoOutput.h | Photo / PhotoInfo / PhotoCaptureEvent::photo |
+| AVCapturePhotoQualityPrioritization | enum | AVCapturePhotoOutput.h | PhotoQualityPrioritization / PhotoSettings / PhotoOutput |
+| AVCapturePhotoSettings | interface | AVCapturePhotoOutput.h | PhotoSettings / PhotoSettingsInfo / PhotoOutput::capture_photo_with_settings |
 | AVCaptureConnection | interface | AVCaptureSession.h | CaptureConnection / CaptureConnectionInfo |
 | AVCaptureSession | interface | AVCaptureSession.h | CaptureSession / CaptureSessionInfo |
 | AVCaptureSessionPreset1280x720 | constant | AVCaptureSessionPreset.h | CaptureSessionPreset::Hd1280x720 |
@@ -54,6 +58,7 @@ COVERAGE_PCT: 38.4%
 | AVCaptureSessionPresetiFrame960x540 | constant | AVCaptureSessionPreset.h | CaptureSessionPreset::IFrame960x540 |
 | AVCaptureVideoDataOutput | interface | AVCaptureVideoDataOutput.h | VideoDataOutput / VideoDataOutputInfo |
 | AVCaptureVideoDataOutputSampleBufferDelegate | protocol | AVCaptureVideoDataOutput.h | VideoDataOutput::set_sample_buffer_handler |
+| AVCaptureVideoPreviewLayer | interface | AVCaptureVideoPreviewLayer.h | VideoPreviewLayer / VideoPreviewLayerInfo |
 
 ## 🔴 GAPS
 | Symbol | Kind | Header | Notes |
@@ -72,7 +77,6 @@ COVERAGE_PCT: 38.4%
 | AVCaptureDeviceTransportControlsPlaybackMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
 | AVCaptureDeviceWasConnectedNotification | constant | AVCaptureDevice.h | No notification/observer surface. |
 | AVCaptureDeviceWasDisconnectedNotification | constant | AVCaptureDevice.h | No notification/observer surface. |
-| AVCaptureExposureMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
 | AVCaptureFocusMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
 | AVCaptureMaxAvailableTorchLevel | constant | AVCaptureDevice.h | Torch mode is wrapped, but level-setting APIs/constants are not. |
 | AVCaptureMicrophoneMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
@@ -89,11 +93,8 @@ COVERAGE_PCT: 38.4%
 | AVCaptureInputPortFormatDescriptionDidChangeNotification | constant | AVCaptureInput.h | No notification/observer surface. |
 | AVCaptureMultichannelAudioMode | enum | AVCaptureInput.h | DeviceInput wrapper does not expose multichannel audio mode. |
 | AVCaptureOutputDataDroppedReason | enum | AVCaptureOutputBase.h | No dropped-sample reason surface. |
-| AVCapturePhoto | interface | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
 | AVCapturePhotoOutputReadinessCoordinator | interface | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
 | AVCapturePhotoOutputReadinessCoordinatorDelegate | protocol | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
-| AVCapturePhotoQualityPrioritization | enum | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
-| AVCapturePhotoSettings | interface | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
 | AVCaptureResolvedPhotoSettings | interface | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
 | AVCaptureReactionEffectState | interface | AVCaptureReactions.h | Reaction types/effects are not exposed. |
 | AVCaptureReactionSystemImageNameForType | function | AVCaptureReactions.h | Reaction types/effects are not exposed. |
@@ -126,7 +127,6 @@ COVERAGE_PCT: 38.4%
 | AVCaptureTimecodeGeneratorSynchronizationStatus | enum | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
 | AVCaptureTimecodeSource | interface | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
 | AVCaptureTimecodeSourceType | enum | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureVideoPreviewLayer | interface | AVCaptureVideoPreviewLayer.h | No preview-layer wrapper. |
 
 ## ⏭️ EXEMPT
 | Symbol | Kind | Header | Reason | SDK attribute |

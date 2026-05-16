@@ -10,6 +10,7 @@ use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{parse_json_and_free, VideoDimensions};
 use crate::output::CaptureOutputRef;
+use crate::photo::{Photo, PhotoQualityPrioritization, PhotoSettings};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +23,7 @@ pub struct PhotoOutputInfo {
     pub supported_flash_modes: Vec<CaptureFlashMode>,
     pub max_photo_dimensions: Option<VideoDimensions>,
     pub capture_readiness: Option<i32>,
+    pub max_photo_quality_prioritization: Option<PhotoQualityPrioritization>,
     pub high_resolution_capture_enabled: bool,
     pub responsive_capture_enabled: Option<bool>,
     pub callback_installed: bool,
@@ -34,8 +36,22 @@ pub struct PhotoCaptureResult {
     pub error: Option<String>,
 }
 
-struct PhotoCaptureCallbackState {
-    callback: Box<dyn FnMut(PhotoCaptureResult) + Send + 'static>,
+#[derive(Debug)]
+pub struct PhotoCaptureEvent {
+    pub unique_id: i64,
+    pub error: Option<String>,
+    pub photo: Option<Photo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PhotoCaptureEventPayload {
+    unique_id: i64,
+    error: Option<String>,
+}
+
+struct PhotoCaptureEventCallbackState {
+    callback: Box<dyn FnMut(PhotoCaptureEvent) + Send + 'static>,
 }
 
 /// Safe wrapper around `AVCapturePhotoOutput`.
@@ -110,6 +126,12 @@ impl PhotoOutput {
         Ok(self.info()?.capture_readiness)
     }
 
+    pub fn max_photo_quality_prioritization(
+        &self,
+    ) -> Result<Option<PhotoQualityPrioritization>, AVCaptureError> {
+        Ok(self.info()?.max_photo_quality_prioritization)
+    }
+
     pub fn high_resolution_capture_enabled(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.high_resolution_capture_enabled)
     }
@@ -130,12 +152,15 @@ impl PhotoOutput {
         }
     }
 
-    pub fn set_responsive_capture_enabled(&self, enabled: bool) -> Result<(), AVCaptureError> {
+    pub fn set_max_photo_quality_prioritization(
+        &self,
+        prioritization: PhotoQualityPrioritization,
+    ) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::photo_output::av_capture_photo_output_set_responsive_capture_enabled(
+            ffi::photo_output::av_capture_photo_output_set_max_photo_quality_prioritization(
                 self.ptr,
-                enabled,
+                prioritization.as_raw(),
                 &mut err,
             )
         };
@@ -145,11 +170,41 @@ impl PhotoOutput {
         Ok(())
     }
 
-    pub fn capture_photo<F>(&self, callback: F) -> Result<(), AVCaptureError>
+    pub fn set_responsive_capture_enabled(&self, enabled: bool) -> Result<(), AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let status = unsafe {
+            ffi::photo_output::av_capture_photo_output_set_responsive_capture_enabled(
+                self.ptr, enabled, &mut err,
+            )
+        };
+        if status != ffi::status::OK {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(())
+    }
+
+    pub fn capture_photo<F>(&self, mut callback: F) -> Result<(), AVCaptureError>
     where
         F: FnMut(PhotoCaptureResult) + Send + 'static,
     {
-        let state = Box::new(PhotoCaptureCallbackState {
+        let settings = PhotoSettings::new()?;
+        self.capture_photo_with_settings(&settings, move |event| {
+            callback(PhotoCaptureResult {
+                unique_id: event.unique_id,
+                error: event.error,
+            });
+        })
+    }
+
+    pub fn capture_photo_with_settings<F>(
+        &self,
+        settings: &PhotoSettings,
+        callback: F,
+    ) -> Result<(), AVCaptureError>
+    where
+        F: FnMut(PhotoCaptureEvent) + Send + 'static,
+    {
+        let state = Box::new(PhotoCaptureEventCallbackState {
             callback: Box::new(callback),
         });
         let userdata = Box::into_raw(state).cast::<c_void>();
@@ -157,33 +212,55 @@ impl PhotoOutput {
         let status = unsafe {
             ffi::photo_output::av_capture_photo_output_capture_photo(
                 self.ptr,
-                Some(photo_capture_trampoline),
+                settings.ptr,
+                Some(photo_capture_event_trampoline),
                 userdata,
-                Some(photo_capture_callback_drop),
+                Some(photo_capture_event_callback_drop),
                 &mut err,
             )
         };
         if status != ffi::status::OK {
-            unsafe { photo_capture_callback_drop(userdata) };
+            unsafe { photo_capture_event_callback_drop(userdata) };
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
     }
 }
 
-unsafe extern "C" fn photo_capture_trampoline(userdata: *mut c_void, payload: *mut c_char) {
-    let Some(state) = userdata.cast::<PhotoCaptureCallbackState>().as_mut() else {
+unsafe extern "C" fn photo_capture_event_trampoline(
+    userdata: *mut c_void,
+    photo_ptr: *mut c_void,
+    payload: *mut c_char,
+) {
+    let Ok(result) = parse_json_and_free::<PhotoCaptureEventPayload>(payload) else {
+        if !photo_ptr.is_null() {
+            ffi::photo::av_capture_photo_release(photo_ptr);
+        }
         return;
     };
-    let Ok(result) = parse_json_and_free::<PhotoCaptureResult>(payload) else {
+    let Some(state) = userdata.cast::<PhotoCaptureEventCallbackState>().as_mut() else {
+        if !photo_ptr.is_null() {
+            ffi::photo::av_capture_photo_release(photo_ptr);
+        }
         return;
     };
-    (state.callback)(result);
+    let photo = if photo_ptr.is_null() {
+        None
+    } else {
+        Some(Photo::from_raw(photo_ptr))
+    };
+    (state.callback)(PhotoCaptureEvent {
+        unique_id: result.unique_id,
+        error: result.error,
+        photo,
+    });
 }
 
-unsafe extern "C" fn photo_capture_callback_drop(userdata: *mut c_void) {
+unsafe extern "C" fn photo_capture_event_callback_drop(userdata: *mut c_void) {
     if userdata.is_null() {
         return;
     }
-    drop(Box::from_raw(userdata.cast::<PhotoCaptureCallbackState>()));
+    drop(Box::from_raw(
+        userdata.cast::<PhotoCaptureEventCallbackState>(),
+    ));
 }

@@ -26,6 +26,11 @@ public typealias AVCJsonCallback = @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafeMutablePointer<CChar>?
 ) -> Void
+public typealias AVCPhotoCallback = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafeMutableRawPointer?,
+    UnsafeMutablePointer<CChar>?
+) -> Void
 public typealias AVCDropCallback = @convention(c) (UnsafeMutableRawPointer?) -> Void
 
 final class AVCJsonCallbackBox {
@@ -52,6 +57,45 @@ final class AVCJsonCallbackBox {
             return
         }
         callback(userData, payloadPtr)
+    }
+
+    func dispose() {
+        guard !disposed else { return }
+        disposed = true
+        if let userData, let dropUserData {
+            dropUserData(userData)
+        }
+    }
+}
+
+final class AVCPhotoCallbackBox {
+    let callback: AVCPhotoCallback
+    let userData: UnsafeMutableRawPointer?
+    let dropUserData: AVCDropCallback?
+    private var disposed = false
+
+    init(
+        callback: @escaping AVCPhotoCallback,
+        userData: UnsafeMutableRawPointer?,
+        dropUserData: AVCDropCallback?
+    ) {
+        self.callback = callback
+        self.userData = userData
+        self.dropUserData = dropUserData
+    }
+
+    func emit<T: Encodable>(_ photo: AVCapturePhoto?, payload: T) {
+        guard !disposed else { return }
+        let photoPtr = photo.map { avcRetain(PhotoBox($0)) }
+        guard let json = try? avcEncodeJSON(payload),
+              let payloadPtr = ffiString(json)
+        else {
+            if let photoPtr {
+                avcRelease(photoPtr, as: PhotoBox.self)
+            }
+            return
+        }
+        callback(userData, photoPtr, payloadPtr)
     }
 
     func dispose() {
@@ -157,6 +201,14 @@ func avcDeviceFormatBox(_ ptr: UnsafeMutableRawPointer) -> DeviceFormatBox {
     avcUnretained(ptr, as: DeviceFormatBox.self)
 }
 
+func avcPhotoSettingsBox(_ ptr: UnsafeMutableRawPointer) -> PhotoSettingsBox {
+    avcUnretained(ptr, as: PhotoSettingsBox.self)
+}
+
+func avcPhotoBox(_ ptr: UnsafeMutableRawPointer) -> PhotoBox {
+    avcUnretained(ptr, as: PhotoBox.self)
+}
+
 func avcConnectionBox(_ ptr: UnsafeMutableRawPointer) -> ConnectionBox {
     avcUnretained(ptr, as: ConnectionBox.self)
 }
@@ -171,6 +223,10 @@ func avcInputBox(_ ptr: UnsafeMutableRawPointer) -> CaptureInputBoxBase {
 
 func avcOutputBox(_ ptr: UnsafeMutableRawPointer) -> CaptureOutputBoxBase {
     avcUnretained(ptr, as: CaptureOutputBoxBase.self)
+}
+
+func avcPreviewLayerBox(_ ptr: UnsafeMutableRawPointer) -> PreviewLayerBox {
+    avcUnretained(ptr, as: PreviewLayerBox.self)
 }
 
 struct CMTimePayload: Codable {

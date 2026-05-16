@@ -50,6 +50,7 @@ extern "C" {
     ) -> *mut c_void;
     pub fn av_capture_device_active_video_min_frame_duration(device: *mut c_void) -> CMTime;
     pub fn av_capture_device_active_video_max_frame_duration(device: *mut c_void) -> CMTime;
+    pub fn av_capture_device_is_exposure_mode_supported(device: *mut c_void, mode: i32) -> bool;
     pub fn av_capture_device_lock_for_configuration(
         device: *mut c_void,
         out_error_message: *mut *mut c_char,
@@ -68,6 +69,11 @@ extern "C" {
     pub fn av_capture_device_set_active_video_max_frame_duration(
         device: *mut c_void,
         duration: CMTime,
+        out_error_message: *mut *mut c_char,
+    ) -> i32;
+    pub fn av_capture_device_set_exposure_mode(
+        device: *mut c_void,
+        mode: i32,
         out_error_message: *mut *mut c_char,
     ) -> i32;
     pub fn av_capture_device_set_torch_mode(

@@ -11,7 +11,11 @@ fn device_formats_smoke() -> common::TestResult {
 
     let formats = device.formats()?;
     assert_eq!(device.formats_count()?, formats.len());
-    let _ = device.details()?;
+    let details = device.details()?;
+    assert_eq!(device.exposure_mode()?, details.exposure_mode);
+    if let Some(mode) = details.exposure_mode {
+        assert!(device.is_exposure_mode_supported(mode));
+    }
     if let Some(active_format) = device.active_format()? {
         let _ = active_format.info()?;
     }

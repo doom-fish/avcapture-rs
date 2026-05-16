@@ -226,6 +226,53 @@ impl From<CaptureTorchMode> for i32 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "i32", into = "i32")]
+#[non_exhaustive]
+pub enum CaptureExposureMode {
+    Locked,
+    AutoExpose,
+    ContinuousAutoExposure,
+    Custom,
+    Unknown(i32),
+}
+
+impl CaptureExposureMode {
+    #[must_use]
+    pub const fn from_raw(raw: i32) -> Self {
+        match raw {
+            0 => Self::Locked,
+            1 => Self::AutoExpose,
+            2 => Self::ContinuousAutoExposure,
+            3 => Self::Custom,
+            other => Self::Unknown(other),
+        }
+    }
+
+    #[must_use]
+    pub const fn as_raw(self) -> i32 {
+        match self {
+            Self::Locked => 0,
+            Self::AutoExpose => 1,
+            Self::ContinuousAutoExposure => 2,
+            Self::Custom => 3,
+            Self::Unknown(raw) => raw,
+        }
+    }
+}
+
+impl From<i32> for CaptureExposureMode {
+    fn from(value: i32) -> Self {
+        Self::from_raw(value)
+    }
+}
+
+impl From<CaptureExposureMode> for i32 {
+    fn from(value: CaptureExposureMode) -> Self {
+        value.as_raw()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureDeviceInfo {
@@ -250,6 +297,7 @@ pub struct CaptureDeviceDetails {
     pub has_torch: bool,
     pub torch_available: bool,
     pub torch_level: Option<f32>,
+    pub exposure_mode: Option<CaptureExposureMode>,
     pub formats_count: usize,
     #[serde(with = "cm_time_serde")]
     pub active_video_min_frame_duration: CMTime,
@@ -420,6 +468,16 @@ impl CaptureDevice {
         Ok(self.details()?.torch_level)
     }
 
+    pub fn exposure_mode(&self) -> Result<Option<CaptureExposureMode>, AVCaptureError> {
+        Ok(self.details()?.exposure_mode)
+    }
+
+    pub fn is_exposure_mode_supported(&self, mode: CaptureExposureMode) -> bool {
+        unsafe {
+            ffi::device::av_capture_device_is_exposure_mode_supported(self.ptr, mode.as_raw())
+        }
+    }
+
     pub fn formats_count(&self) -> Result<usize, AVCaptureError> {
         Ok(self.details()?.formats_count)
     }
@@ -526,6 +584,21 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_active_video_max_frame_duration(
                 self.device.ptr,
                 duration,
+                &mut err,
+            )
+        };
+        if status != ffi::status::OK {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(())
+    }
+
+    pub fn set_exposure_mode(&self, mode: CaptureExposureMode) -> Result<(), AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let status = unsafe {
+            ffi::device::av_capture_device_set_exposure_mode(
+                self.device.ptr,
+                mode.as_raw(),
                 &mut err,
             )
         };
