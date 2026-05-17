@@ -7,6 +7,20 @@ private struct VideoPreviewLayerInfoPayload: Codable {
     let videoGravity: String
 }
 
+private struct CapturePointPayload: Codable {
+    let x: Double
+    let y: Double
+
+    init(_ point: CGPoint) {
+        x = point.x
+        y = point.y
+    }
+
+    var point: CGPoint {
+        CGPoint(x: x, y: y)
+    }
+}
+
 final class PreviewLayerBox: NSObject {
     let layer: AVCaptureVideoPreviewLayer
 
@@ -100,4 +114,129 @@ public func av_capture_video_preview_layer_set_video_gravity(
     }
     avcPreviewLayerBox(layerPtr).layer.videoGravity = videoGravity
     return AVC_OK
+}
+
+@_cdecl("av_capture_video_preview_layer_set_session")
+public func av_capture_video_preview_layer_set_session(
+    _ layerPtr: UnsafeMutableRawPointer,
+    _ sessionPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    avcPreviewLayerBox(layerPtr).layer.session = avcSessionBox(sessionPtr).session
+    return AVC_OK
+}
+
+@_cdecl("av_capture_video_preview_layer_clear_session")
+public func av_capture_video_preview_layer_clear_session(_ layerPtr: UnsafeMutableRawPointer) {
+    avcPreviewLayerBox(layerPtr).layer.session = nil
+}
+
+@_cdecl("av_capture_video_preview_layer_set_session_with_no_connection")
+public func av_capture_video_preview_layer_set_session_with_no_connection(
+    _ layerPtr: UnsafeMutableRawPointer,
+    _ sessionPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    let layer = avcPreviewLayerBox(layerPtr).layer
+    let selector = NSSelectorFromString("setSessionWithNoConnection:")
+    guard layer.responds(to: selector) else {
+        outErrorMessage?.pointee = ffiString("preview layer no-connection reattach is unavailable on this macOS runtime")
+        return AVC_OPERATION_FAILED
+    }
+    layer.setSessionWithNoConnection(avcSessionBox(sessionPtr).session)
+    return AVC_OK
+}
+
+@_cdecl("av_capture_video_preview_layer_capture_device_point_of_interest_for_point_json")
+public func av_capture_video_preview_layer_capture_device_point_of_interest_for_point_json(
+    _ layerPtr: UnsafeMutableRawPointer,
+    _ pointJson: UnsafePointer<CChar>,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutablePointer<CChar>? {
+    guard #available(macOS 10.15, *) else {
+        outErrorMessage?.pointee = ffiString("preview layer point conversions require macOS 10.15 or newer")
+        return nil
+    }
+    let layer = avcPreviewLayerBox(layerPtr).layer
+    do {
+        let point = try avcDecodeJSON(pointJson, as: CapturePointPayload.self)
+        return ffiString(
+            try avcEncodeJSON(
+                CapturePointPayload(layer.captureDevicePointConverted(fromLayerPoint: point.point))
+            )
+        )
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return nil
+    }
+}
+
+@_cdecl("av_capture_video_preview_layer_point_for_capture_device_point_of_interest_json")
+public func av_capture_video_preview_layer_point_for_capture_device_point_of_interest_json(
+    _ layerPtr: UnsafeMutableRawPointer,
+    _ pointJson: UnsafePointer<CChar>,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutablePointer<CChar>? {
+    guard #available(macOS 10.15, *) else {
+        outErrorMessage?.pointee = ffiString("preview layer point conversions require macOS 10.15 or newer")
+        return nil
+    }
+    let layer = avcPreviewLayerBox(layerPtr).layer
+    do {
+        let point = try avcDecodeJSON(pointJson, as: CapturePointPayload.self)
+        return ffiString(
+            try avcEncodeJSON(
+                CapturePointPayload(layer.layerPointConverted(fromCaptureDevicePoint: point.point))
+            )
+        )
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return nil
+    }
+}
+
+@_cdecl("av_capture_video_preview_layer_metadata_output_rect_of_interest_for_rect_json")
+public func av_capture_video_preview_layer_metadata_output_rect_of_interest_for_rect_json(
+    _ layerPtr: UnsafeMutableRawPointer,
+    _ rectJson: UnsafePointer<CChar>,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutablePointer<CChar>? {
+    guard #available(macOS 10.15, *) else {
+        outErrorMessage?.pointee = ffiString("preview layer rect conversions require macOS 10.15 or newer")
+        return nil
+    }
+    let layer = avcPreviewLayerBox(layerPtr).layer
+    do {
+        let rect = try avcDecodeJSON(rectJson, as: CaptureRectPayload.self)
+        let converted = layer.metadataOutputRectConverted(
+            fromLayerRect: CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+        )
+        return ffiString(try avcEncodeJSON(CaptureRectPayload(converted)))
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return nil
+    }
+}
+
+@_cdecl("av_capture_video_preview_layer_rect_for_metadata_output_rect_of_interest_json")
+public func av_capture_video_preview_layer_rect_for_metadata_output_rect_of_interest_json(
+    _ layerPtr: UnsafeMutableRawPointer,
+    _ rectJson: UnsafePointer<CChar>,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutablePointer<CChar>? {
+    guard #available(macOS 10.15, *) else {
+        outErrorMessage?.pointee = ffiString("preview layer rect conversions require macOS 10.15 or newer")
+        return nil
+    }
+    let layer = avcPreviewLayerBox(layerPtr).layer
+    do {
+        let rect = try avcDecodeJSON(rectJson, as: CaptureRectPayload.self)
+        let converted = layer.layerRectConverted(
+            fromMetadataOutputRect: CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+        )
+        return ffiString(try avcEncodeJSON(CaptureRectPayload(converted)))
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return nil
+    }
 }

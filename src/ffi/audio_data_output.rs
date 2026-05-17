@@ -23,4 +23,18 @@ extern "C" {
         out_error_message: *mut *mut c_char,
     ) -> i32;
     pub fn av_capture_audio_output_clear_sample_buffer_callback(output: *mut c_void);
+
+    pub fn av_capture_audio_preview_output_create(
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_void;
+    pub fn av_capture_audio_preview_output_release(output: *mut c_void);
+    pub fn av_capture_audio_preview_output_info_json(
+        output: *mut c_void,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_char;
+    pub fn av_capture_audio_preview_output_set_output_device_unique_id(
+        output: *mut c_void,
+        output_device_unique_id: *const c_char,
+    );
+    pub fn av_capture_audio_preview_output_set_volume(output: *mut c_void, volume: f32);
 }

@@ -2,6 +2,20 @@ import AVFoundation
 import CoreMedia
 import Foundation
 
+private struct AudioDataOutputInfoSnapshot: Codable {
+    let connectionCount: Int
+    let callbackInstalled: Bool
+    let audioSettings: AudioOutputSettingsPayload?
+    let droppedSampleCount: Int
+    let lastDroppedSampleReason: String?
+}
+
+private struct AudioPreviewOutputInfoPayload: Codable {
+    let connectionCount: Int
+    let outputDeviceUniqueID: String?
+    let volume: Float
+}
+
 private final class AudioSampleCallbackBox {
     let callback: AVCAudioSampleCallback
     let userData: UnsafeMutableRawPointer?
@@ -44,6 +58,7 @@ private final class AudioSampleDelegate: NSObject, AVCaptureAudioDataOutputSampl
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        owner?.noteDroppedReasonIfPresent(sampleBuffer)
         owner?.callbackBox?.emit(sampleBuffer: sampleBuffer)
     }
 }
@@ -53,6 +68,8 @@ final class AudioDataOutputBox: CaptureOutputBoxBase {
     fileprivate var callbackBox: AudioSampleCallbackBox?
     private var delegate: AudioSampleDelegate?
     private var callbackQueue: DispatchQueue?
+    private var droppedSampleCount = 0
+    private var lastDroppedSampleReason: String?
 
     override var output: AVCaptureOutput {
         audioOutput
@@ -62,12 +79,20 @@ final class AudioDataOutputBox: CaptureOutputBoxBase {
         clearCallback()
     }
 
-    func infoPayload() -> AudioDataOutputInfoPayload {
-        AudioDataOutputInfoPayload(
+    fileprivate func infoPayload() -> AudioDataOutputInfoSnapshot {
+        AudioDataOutputInfoSnapshot(
             connectionCount: audioOutput.connections.count,
             callbackInstalled: callbackBox != nil,
-            audioSettings: avcEncodeAudioSettings(audioOutput.audioSettings)
+            audioSettings: avcEncodeAudioSettings(audioOutput.audioSettings),
+            droppedSampleCount: droppedSampleCount,
+            lastDroppedSampleReason: lastDroppedSampleReason
         )
+    }
+
+    func noteDroppedReasonIfPresent(_ sampleBuffer: CMSampleBuffer) {
+        guard let reason = avcDroppedSampleReason(from: sampleBuffer) else { return }
+        droppedSampleCount += 1
+        lastDroppedSampleReason = reason
     }
 
     func setCallback(
@@ -92,6 +117,22 @@ final class AudioDataOutputBox: CaptureOutputBoxBase {
         callbackQueue = nil
         callbackBox?.dispose()
         callbackBox = nil
+    }
+}
+
+final class AudioPreviewOutputBox: CaptureOutputBoxBase {
+    let previewOutput = AVCaptureAudioPreviewOutput()
+
+    override var output: AVCaptureOutput {
+        previewOutput
+    }
+
+    fileprivate func infoPayload() -> AudioPreviewOutputInfoPayload {
+        AudioPreviewOutputInfoPayload(
+            connectionCount: previewOutput.connections.count,
+            outputDeviceUniqueID: previewOutput.outputDeviceUniqueID,
+            volume: previewOutput.volume
+        )
     }
 }
 
@@ -164,4 +205,47 @@ public func av_capture_audio_output_set_sample_buffer_callback(
 @_cdecl("av_capture_audio_output_clear_sample_buffer_callback")
 public func av_capture_audio_output_clear_sample_buffer_callback(_ outputPtr: UnsafeMutableRawPointer) {
     avcUnretained(outputPtr, as: AudioDataOutputBox.self).clearCallback()
+}
+
+@_cdecl("av_capture_audio_preview_output_create")
+public func av_capture_audio_preview_output_create(
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutableRawPointer? {
+    avcRetain(AudioPreviewOutputBox())
+}
+
+@_cdecl("av_capture_audio_preview_output_release")
+public func av_capture_audio_preview_output_release(_ outputPtr: UnsafeMutableRawPointer?) {
+    avcRelease(outputPtr, as: AudioPreviewOutputBox.self)
+}
+
+@_cdecl("av_capture_audio_preview_output_info_json")
+public func av_capture_audio_preview_output_info_json(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutablePointer<CChar>? {
+    let output = avcUnretained(outputPtr, as: AudioPreviewOutputBox.self)
+    do {
+        return ffiString(try avcEncodeJSON(output.infoPayload()))
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return nil
+    }
+}
+
+@_cdecl("av_capture_audio_preview_output_set_output_device_unique_id")
+public func av_capture_audio_preview_output_set_output_device_unique_id(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ outputDeviceUniqueIDPtr: UnsafePointer<CChar>?
+) {
+    let output = avcUnretained(outputPtr, as: AudioPreviewOutputBox.self)
+    output.previewOutput.outputDeviceUniqueID = outputDeviceUniqueIDPtr.map { String(cString: $0) }
+}
+
+@_cdecl("av_capture_audio_preview_output_set_volume")
+public func av_capture_audio_preview_output_set_volume(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ volume: Float
+) {
+    avcUnretained(outputPtr, as: AudioPreviewOutputBox.self).previewOutput.volume = volume
 }

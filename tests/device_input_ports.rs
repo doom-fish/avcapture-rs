@@ -20,5 +20,14 @@ fn device_input_ports_smoke() -> common::TestResult {
     let info = input.info()?;
     let generic_info = input.input_info()?;
     assert_eq!(info.ports_count, generic_info.ports_count());
+    assert_eq!(
+        DeviceInput::INPUT_PORT_FORMAT_DESCRIPTION_DID_CHANGE_NOTIFICATION,
+        "AVCaptureInputPortFormatDescriptionDidChangeNotification"
+    );
+    let _ = input.multichannel_audio_mode()?;
+    let _ = input.wind_noise_removal_supported()?;
+    let _ = input.wind_noise_removal_enabled()?;
+    let _ = input.is_multichannel_audio_mode_supported(0_i32);
+    let _ = info.multichannel_audio_mode.map(i32::from);
     Ok(())
 }

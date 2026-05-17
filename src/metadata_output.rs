@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
-use crate::helpers::{CaptureRect, json_cstring, parse_json_and_free};
+use crate::helpers::{json_cstring, parse_json_and_free, CaptureRect};
 use crate::output::CaptureOutputRef;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

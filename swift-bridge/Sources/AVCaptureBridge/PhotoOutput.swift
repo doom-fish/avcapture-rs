@@ -19,6 +19,11 @@ struct PhotoOutputInfoPayload: Codable {
 struct PhotoCaptureResultPayload: Codable {
     let uniqueId: Int64
     let error: String?
+    let resolvedSettings: ResolvedPhotoSettingsInfoPayload
+}
+
+private struct PhotoOutputReadinessPayload: Codable {
+    let captureReadiness: Int32
 }
 
 private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
@@ -41,7 +46,25 @@ private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegat
         didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
         error: Error?
     ) {
-        owner?.completeCapture(uniqueId: Int64(resolvedSettings.uniqueID), error: error)
+        owner?.completeCapture(resolvedSettings: resolvedSettings, error: error)
+    }
+}
+
+@available(macOS 14.0, *)
+private final class PhotoOutputReadinessCoordinatorDelegateBox: NSObject,
+    AVCapturePhotoOutputReadinessCoordinatorDelegate
+{
+    private weak var owner: PhotoOutputReadinessCoordinatorBox?
+
+    init(owner: PhotoOutputReadinessCoordinatorBox) {
+        self.owner = owner
+    }
+
+    func readinessCoordinator(
+        _ coordinator: AVCapturePhotoOutputReadinessCoordinator,
+        captureReadinessDidChange captureReadiness: AVCapturePhotoOutput.CaptureReadiness
+    ) {
+        owner?.emitCaptureReadiness(captureReadiness)
     }
 }
 
@@ -147,12 +170,16 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
         }
     }
 
-    fileprivate func completeCapture(uniqueId: Int64, error: Error?) {
+    fileprivate func completeCapture(
+        resolvedSettings: AVCaptureResolvedPhotoSettings,
+        error: Error?
+    ) {
         callbackBox?.emit(
             processedPhoto,
             payload: PhotoCaptureResultPayload(
-                uniqueId: uniqueId,
-                error: (error ?? processingError)?.localizedDescription
+                uniqueId: Int64(resolvedSettings.uniqueID),
+                error: (error ?? processingError)?.localizedDescription,
+                resolvedSettings: resolvedPhotoSettingsInfoPayload(from: resolvedSettings)
             )
         )
         clearCaptureState()
@@ -164,6 +191,63 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
         processingError = nil
         callbackBox?.dispose()
         callbackBox = nil
+    }
+}
+
+@available(macOS 14.0, *)
+final class PhotoOutputReadinessCoordinatorBox: NSObject {
+    let coordinator: AVCapturePhotoOutputReadinessCoordinator
+    fileprivate var delegateBox: PhotoOutputReadinessCoordinatorDelegateBox?
+    fileprivate var callbackBox: AVCJsonCallbackBox?
+
+    init(photoOutput: AVCapturePhotoOutput) {
+        coordinator = AVCapturePhotoOutputReadinessCoordinator(photoOutput: photoOutput)
+    }
+
+    deinit {
+        clearCallback()
+    }
+
+    fileprivate func captureReadinessRaw() -> Int32 {
+        Int32(coordinator.captureReadiness.rawValue)
+    }
+
+    fileprivate func setCallback(
+        callback: @escaping AVCJsonCallback,
+        userData: UnsafeMutableRawPointer?,
+        dropUserData: AVCDropCallback?
+    ) {
+        clearCallback()
+        let callbackBox = AVCJsonCallbackBox(
+            callback: callback,
+            userData: userData,
+            dropUserData: dropUserData
+        )
+        let delegate = PhotoOutputReadinessCoordinatorDelegateBox(owner: self)
+        self.callbackBox = callbackBox
+        delegateBox = delegate
+        coordinator.delegate = delegate
+    }
+
+    fileprivate func clearCallback() {
+        coordinator.delegate = nil
+        delegateBox = nil
+        callbackBox?.dispose()
+        callbackBox = nil
+    }
+
+    fileprivate func emitCaptureReadiness(
+        _ captureReadiness: AVCapturePhotoOutput.CaptureReadiness
+    ) {
+        callbackBox?.emit(PhotoOutputReadinessPayload(captureReadiness: Int32(captureReadiness.rawValue)))
+    }
+
+    fileprivate func startTrackingCaptureRequest(settingsPtr: UnsafeMutableRawPointer) {
+        coordinator.startTrackingCaptureRequest(using: avcPhotoSettingsBox(settingsPtr).settings)
+    }
+
+    fileprivate func stopTrackingCaptureRequest(settingsUniqueID: Int64) {
+        coordinator.stopTrackingCaptureRequest(using: settingsUniqueID)
     }
 }
 
@@ -265,4 +349,111 @@ public func av_capture_photo_output_capture_photo(
         outErrorMessage?.pointee = ffiString(error.localizedDescription)
         return AVC_OUTPUT_ERROR
     }
+}
+
+@_cdecl("av_capture_photo_output_readiness_coordinator_create")
+public func av_capture_photo_output_readiness_coordinator_create(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutableRawPointer? {
+    guard #available(macOS 14.0, *) else {
+        outErrorMessage?.pointee = ffiString("photo output readiness coordinator requires macOS 14.0 or newer")
+        return nil
+    }
+    let output = avcUnretained(outputPtr, as: PhotoOutputBox.self).photoOutput
+    guard !output.connections.isEmpty else {
+        outErrorMessage?.pointee = ffiString("photo output readiness coordinator requires a session-attached photo output")
+        return nil
+    }
+    guard output.connection(with: .video) != nil || output.connection(with: .muxed) != nil else {
+        outErrorMessage?.pointee = ffiString("photo output readiness coordinator requires a video-capable connection")
+        return nil
+    }
+    return avcRetain(PhotoOutputReadinessCoordinatorBox(photoOutput: output))
+}
+
+@_cdecl("av_capture_photo_output_readiness_coordinator_release")
+public func av_capture_photo_output_readiness_coordinator_release(
+    _ coordinatorPtr: UnsafeMutableRawPointer?
+) {
+    guard #available(macOS 14.0, *) else {
+        return
+    }
+    avcRelease(coordinatorPtr, as: PhotoOutputReadinessCoordinatorBox.self)
+}
+
+@_cdecl("av_capture_photo_output_readiness_coordinator_capture_readiness")
+public func av_capture_photo_output_readiness_coordinator_capture_readiness(
+    _ coordinatorPtr: UnsafeMutableRawPointer,
+    _ outReadiness: UnsafeMutablePointer<Int32>,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    guard #available(macOS 14.0, *) else {
+        outErrorMessage?.pointee = ffiString("photo output readiness coordinator requires macOS 14.0 or newer")
+        return AVC_OUTPUT_ERROR
+    }
+    let coordinator = avcUnretained(coordinatorPtr, as: PhotoOutputReadinessCoordinatorBox.self)
+    outReadiness.pointee = coordinator.captureReadinessRaw()
+    return AVC_OK
+}
+
+@_cdecl("av_capture_photo_output_readiness_coordinator_set_callback")
+public func av_capture_photo_output_readiness_coordinator_set_callback(
+    _ coordinatorPtr: UnsafeMutableRawPointer,
+    _ callback: AVCJsonCallback?,
+    _ userData: UnsafeMutableRawPointer?,
+    _ dropUserData: AVCDropCallback?,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    guard #available(macOS 14.0, *) else {
+        outErrorMessage?.pointee = ffiString("photo output readiness coordinator requires macOS 14.0 or newer")
+        return AVC_OUTPUT_ERROR
+    }
+    guard let callback else {
+        outErrorMessage?.pointee = ffiString("missing photo output readiness callback")
+        return AVC_CALLBACK_ERROR
+    }
+    let coordinator = avcUnretained(coordinatorPtr, as: PhotoOutputReadinessCoordinatorBox.self)
+    coordinator.setCallback(callback: callback, userData: userData, dropUserData: dropUserData)
+    return AVC_OK
+}
+
+@_cdecl("av_capture_photo_output_readiness_coordinator_clear_callback")
+public func av_capture_photo_output_readiness_coordinator_clear_callback(
+    _ coordinatorPtr: UnsafeMutableRawPointer
+) {
+    guard #available(macOS 14.0, *) else {
+        return
+    }
+    avcUnretained(coordinatorPtr, as: PhotoOutputReadinessCoordinatorBox.self).clearCallback()
+}
+
+@_cdecl("av_capture_photo_output_readiness_coordinator_start_tracking_capture_request")
+public func av_capture_photo_output_readiness_coordinator_start_tracking_capture_request(
+    _ coordinatorPtr: UnsafeMutableRawPointer,
+    _ settingsPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    guard #available(macOS 14.0, *) else {
+        outErrorMessage?.pointee = ffiString("photo output readiness coordinator requires macOS 14.0 or newer")
+        return AVC_OUTPUT_ERROR
+    }
+    let coordinator = avcUnretained(coordinatorPtr, as: PhotoOutputReadinessCoordinatorBox.self)
+    coordinator.startTrackingCaptureRequest(settingsPtr: settingsPtr)
+    return AVC_OK
+}
+
+@_cdecl("av_capture_photo_output_readiness_coordinator_stop_tracking_capture_request")
+public func av_capture_photo_output_readiness_coordinator_stop_tracking_capture_request(
+    _ coordinatorPtr: UnsafeMutableRawPointer,
+    _ settingsUniqueID: Int64,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    guard #available(macOS 14.0, *) else {
+        outErrorMessage?.pointee = ffiString("photo output readiness coordinator requires macOS 14.0 or newer")
+        return AVC_OUTPUT_ERROR
+    }
+    let coordinator = avcUnretained(coordinatorPtr, as: PhotoOutputReadinessCoordinatorBox.self)
+    coordinator.stopTrackingCaptureRequest(settingsUniqueID: settingsUniqueID)
+    return AVC_OK
 }

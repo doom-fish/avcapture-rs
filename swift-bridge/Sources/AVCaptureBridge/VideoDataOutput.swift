@@ -3,6 +3,16 @@ import CoreMedia
 import CoreVideo
 import Foundation
 
+private struct VideoDataOutputInfoSnapshot: Codable {
+    let connectionCount: Int
+    let alwaysDiscardsLateVideoFrames: Bool
+    let availableVideoCvPixelFormatTypes: [UInt32]
+    let callbackInstalled: Bool
+    let videoSettings: VideoOutputSettingsPayload?
+    let droppedSampleCount: Int
+    let lastDroppedSampleReason: String?
+}
+
 private final class VideoSampleCallbackBox {
     let callback: AVCVideoSampleCallback
     let userData: UnsafeMutableRawPointer?
@@ -46,6 +56,7 @@ private final class VideoSampleDelegate: NSObject, AVCaptureVideoDataOutputSampl
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        owner?.noteDroppedReasonIfPresent(sampleBuffer)
         owner?.callbackBox?.emit(
             sampleBuffer: sampleBuffer,
             pixelBuffer: CMSampleBufferGetImageBuffer(sampleBuffer)
@@ -58,6 +69,8 @@ final class VideoDataOutputBox: CaptureOutputBoxBase {
     fileprivate var callbackBox: VideoSampleCallbackBox?
     private var delegate: VideoSampleDelegate?
     private var callbackQueue: DispatchQueue?
+    private var droppedSampleCount = 0
+    private var lastDroppedSampleReason: String?
 
     override var output: AVCaptureOutput {
         videoOutput
@@ -67,20 +80,28 @@ final class VideoDataOutputBox: CaptureOutputBoxBase {
         clearCallback()
     }
 
-    func infoPayload() -> VideoDataOutputInfoPayload {
+    fileprivate func infoPayload() -> VideoDataOutputInfoSnapshot {
         let availableFormats: [UInt32]
         #if os(macOS)
         availableFormats = []
         #else
         availableFormats = videoOutput.availableVideoCVPixelFormatTypes.map(\.uint32Value)
         #endif
-        return VideoDataOutputInfoPayload(
+        return VideoDataOutputInfoSnapshot(
             connectionCount: videoOutput.connections.count,
             alwaysDiscardsLateVideoFrames: videoOutput.alwaysDiscardsLateVideoFrames,
             availableVideoCvPixelFormatTypes: availableFormats,
             callbackInstalled: callbackBox != nil,
-            videoSettings: avcEncodeVideoSettings(videoOutput.videoSettings)
+            videoSettings: avcEncodeVideoSettings(videoOutput.videoSettings),
+            droppedSampleCount: droppedSampleCount,
+            lastDroppedSampleReason: lastDroppedSampleReason
         )
+    }
+
+    func noteDroppedReasonIfPresent(_ sampleBuffer: CMSampleBuffer) {
+        guard let reason = avcDroppedSampleReason(from: sampleBuffer) else { return }
+        droppedSampleCount += 1
+        lastDroppedSampleReason = reason
     }
 
     func setCallback(

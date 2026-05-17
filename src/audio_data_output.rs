@@ -1,4 +1,4 @@
-#![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
+#![allow(clippy::missing_errors_doc, clippy::must_use_candidate, dead_code)]
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
-use crate::helpers::{optional_json_cstring, parse_json_and_free};
-use crate::output::CaptureOutputRef;
+use crate::helpers::{cstring, optional_json_cstring, parse_json_and_free};
+use crate::output::{AVCaptureOutputDataDroppedReason, CaptureOutputRef};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +69,16 @@ pub struct AudioDataOutputInfo {
     pub connection_count: usize,
     pub callback_installed: bool,
     pub audio_settings: Option<AudioOutputSettings>,
+    pub dropped_sample_count: usize,
+    pub last_dropped_sample_reason: Option<AVCaptureOutputDataDroppedReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioPreviewOutputInfo {
+    pub connection_count: usize,
+    pub output_device_unique_id: Option<String>,
+    pub volume: f32,
 }
 
 struct AudioCallbackState {
@@ -77,6 +87,11 @@ struct AudioCallbackState {
 
 /// Safe wrapper around `AVCaptureAudioDataOutput`.
 pub struct AudioDataOutput {
+    pub(crate) ptr: *mut c_void,
+}
+
+/// Safe wrapper around `AVCaptureAudioPreviewOutput`.
+pub struct AudioPreviewOutput {
     pub(crate) ptr: *mut c_void,
 }
 
@@ -89,7 +104,22 @@ impl Drop for AudioDataOutput {
     }
 }
 
+impl Drop for AudioPreviewOutput {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { ffi::audio_data_output::av_capture_audio_preview_output_release(self.ptr) };
+            self.ptr = ptr::null_mut();
+        }
+    }
+}
+
 impl CaptureOutputRef for AudioDataOutput {
+    fn output_ptr(&self) -> *mut c_void {
+        self.ptr
+    }
+}
+
+impl CaptureOutputRef for AudioPreviewOutput {
     fn output_ptr(&self) -> *mut c_void {
         self.ptr
     }
@@ -126,6 +156,16 @@ impl AudioDataOutput {
 
     pub fn callback_installed(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.callback_installed)
+    }
+
+    pub fn dropped_sample_count(&self) -> Result<usize, AVCaptureError> {
+        Ok(self.info()?.dropped_sample_count)
+    }
+
+    pub fn last_dropped_sample_reason(
+        &self,
+    ) -> Result<Option<AVCaptureOutputDataDroppedReason>, AVCaptureError> {
+        Ok(self.info()?.last_dropped_sample_reason)
     }
 
     pub fn set_audio_settings(
@@ -185,6 +225,71 @@ impl AudioDataOutput {
         unsafe {
             ffi::audio_data_output::av_capture_audio_output_clear_sample_buffer_callback(self.ptr);
         }
+    }
+}
+
+impl AudioPreviewOutput {
+    pub fn new() -> Result<Self, AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let ptr =
+            unsafe { ffi::audio_data_output::av_capture_audio_preview_output_create(&mut err) };
+        if ptr.is_null() {
+            return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
+        }
+        Ok(Self { ptr })
+    }
+
+    pub fn info(&self) -> Result<AudioPreviewOutputInfo, AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let json_ptr = unsafe {
+            ffi::audio_data_output::av_capture_audio_preview_output_info_json(self.ptr, &mut err)
+        };
+        if json_ptr.is_null() {
+            return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
+        }
+        parse_json_and_free(json_ptr)
+    }
+
+    pub fn connection_count(&self) -> Result<usize, AVCaptureError> {
+        Ok(self.info()?.connection_count)
+    }
+
+    pub fn output_device_unique_id(&self) -> Result<Option<String>, AVCaptureError> {
+        Ok(self.info()?.output_device_unique_id)
+    }
+
+    pub fn volume(&self) -> Result<f32, AVCaptureError> {
+        Ok(self.info()?.volume)
+    }
+
+    pub fn set_output_device_unique_id(
+        &self,
+        output_device_unique_id: Option<&str>,
+    ) -> Result<(), AVCaptureError> {
+        let output_device_unique_id = output_device_unique_id
+            .map(|value| cstring(value, "audio preview output device unique id"))
+            .transpose()?;
+        unsafe {
+            ffi::audio_data_output::av_capture_audio_preview_output_set_output_device_unique_id(
+                self.ptr,
+                output_device_unique_id
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+            );
+        }
+        Ok(())
+    }
+
+    pub fn set_volume(&self, volume: f32) -> Result<(), AVCaptureError> {
+        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+            return Err(AVCaptureError::InvalidArgument(
+                "audio preview output volume must be a finite value between 0.0 and 1.0".to_owned(),
+            ));
+        }
+        unsafe {
+            ffi::audio_data_output::av_capture_audio_preview_output_set_volume(self.ptr, volume);
+        }
+        Ok(())
     }
 }
 

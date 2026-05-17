@@ -2,15 +2,13 @@
 
 Safe Rust bindings for Apple's `AVCapture` stack on macOS.
 
-## 0.2.1 highlights
+## 0.2.2 highlights
 
-- `AVCaptureDevice` enumeration, authorization, lookup, format inspection, configuration locking, and typed exposure / flash / torch modes.
-- `AVCaptureDeviceDiscoverySession` wrappers for type/media/position-based discovery.
-- `AVCaptureDeviceInput`, `AVCaptureScreenInput`, generic input/port inspection, and `AVCaptureVideoPreviewLayer` preview inspection.
-- `AVCaptureSession` presets plus session-level `AVCaptureConnection` inspection.
-- `AVCaptureVideoDataOutput` and `AVCaptureAudioDataOutput` with Rust closure callbacks.
-- `AVCapturePhotoOutput`, `PhotoSettings`, `Photo`, `PhotoQualityPrioritization`, `AVCaptureMovieFileOutput`, and `AVCaptureMetadataOutput` wrappers plus delegate-to-closure callback bridges.
-- Headless-safe numbered examples and per-area tests.
+- `AVCaptureDevice` now covers focus / white-balance / autofocus / color-space state, torch-level constants, input sources, rotation coordinators, Center Stage / microphone modes, reactions, and related notification constants.
+- Added `AVCaptureAudioPreviewOutput`, `AVCaptureAudioFileOutput`, `AVCaptureAudioChannel`, typed dropped-sample reasons, and base file-output sample-buffer-boundary callbacks.
+- Added `AVCapturePhotoOutputReadinessCoordinator`, `ResolvedPhotoSettings`, session controls / deferred-start delegates, Desk View / external-display helpers, and the `AVCaptureTimecode*` family.
+- `AVCaptureVideoPreviewLayer` now includes geometry conversion plus Desk View / external-display entry points.
+- Headless-safe numbered examples and per-area tests now cover examples `01` through `13`.
 
 See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
 
@@ -59,6 +57,8 @@ These examples intentionally avoid `startRunning`, and only invoke photo/movie c
 - `cargo run --example 09_movie_file_output`
 - `cargo run --example 10_metadata_output`
 - `cargo run --example 11_video_preview_layer`
+- `cargo run --example 12_session_controls`
+- `cargo run --example 13_display_timecode`
 
 ## Notes
 
@@ -66,7 +66,8 @@ These examples intentionally avoid `startRunning`, and only invoke photo/movie c
 - `PhotoOutput` capability arrays are often empty until the output is attached to a session with a video source.
 - `PhotoSettings` flash-mode and quality-prioritization controls require macOS 13.0 or newer at runtime.
 - `VideoPreviewLayer` may not expose a connection until its session has an eligible video input.
-- `MovieFileOutput` recording controls and callbacks are exposed, but the bundled examples intentionally stop short of running a session and writing files.
+- Newer surfaces such as session controls, Desk View / external-display helpers, and timecode generation are runtime-gated and return descriptive errors on unsupported macOS releases.
+- The bundled examples remain headless-safe and intentionally avoid `startRunning` or writing capture files unless the API itself can report the unsupported/not-attached state safely.
 
 ## License
 

@@ -16,7 +16,23 @@ fn main() -> support::ExampleResult {
         }
     };
 
+    println!(
+        "input port format notification: {}",
+        DeviceInput::INPUT_PORT_FORMAT_DESCRIPTION_DID_CHANGE_NOTIFICATION
+    );
     println!("device input info: {:?}", input.info()?);
     println!("generic input info: {:?}", input.input_info()?);
+    println!(
+        "multichannel audio mode supported (none): {}",
+        input.is_multichannel_audio_mode_supported(0_i32)
+    );
+    println!(
+        "wind noise removal supported: {}",
+        input.wind_noise_removal_supported()?
+    );
+    println!(
+        "wind noise removal enabled: {}",
+        input.wind_noise_removal_enabled()?
+    );
     Ok(())
 }

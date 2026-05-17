@@ -8,6 +8,13 @@ private struct PhotoSettingsInfoPayload: Codable {
     let photoQualityPrioritization: Int32?
 }
 
+struct ResolvedPhotoSettingsInfoPayload: Codable {
+    let uniqueId: Int64
+    let photoDimensions: VideoDimensionsPayload
+    let expectedPhotoCount: Int
+    let fastCapturePrioritizationEnabled: Bool?
+}
+
 private struct PhotoInfoPayload: Codable {
     let uniqueId: Int64
     let timestamp: CMTimePayload
@@ -16,6 +23,7 @@ private struct PhotoInfoPayload: Codable {
     let constantColorConfidenceMapAvailable: Bool?
     let constantColorCenterWeightedMeanConfidenceLevel: Float?
     let constantColorFallbackPhoto: Bool?
+    let resolvedSettings: ResolvedPhotoSettingsInfoPayload
 }
 
 final class PhotoSettingsBox: NSObject {
@@ -26,12 +34,24 @@ final class PhotoSettingsBox: NSObject {
     }
 }
 
+final class ResolvedPhotoSettingsBox: NSObject {
+    let resolvedSettings: AVCaptureResolvedPhotoSettings
+
+    init(_ resolvedSettings: AVCaptureResolvedPhotoSettings) {
+        self.resolvedSettings = resolvedSettings
+    }
+}
+
 final class PhotoBox: NSObject {
     let photo: AVCapturePhoto
 
     init(_ photo: AVCapturePhoto) {
         self.photo = photo
     }
+}
+
+private func avcResolvedPhotoSettingsBox(_ ptr: UnsafeMutableRawPointer) -> ResolvedPhotoSettingsBox {
+    avcUnretained(ptr, as: ResolvedPhotoSettingsBox.self)
 }
 
 private func photoSettingsInfoPayload(from settings: AVCapturePhotoSettings) -> PhotoSettingsInfoPayload {
@@ -55,6 +75,23 @@ private func photoSettingsInfoPayload(from settings: AVCapturePhotoSettings) -> 
     )
 }
 
+func resolvedPhotoSettingsInfoPayload(
+    from resolvedSettings: AVCaptureResolvedPhotoSettings
+) -> ResolvedPhotoSettingsInfoPayload {
+    let fastCapturePrioritizationEnabled: Bool?
+    if #available(macOS 14.0, *) {
+        fastCapturePrioritizationEnabled = resolvedSettings.isFastCapturePrioritizationEnabled
+    } else {
+        fastCapturePrioritizationEnabled = nil
+    }
+    return ResolvedPhotoSettingsInfoPayload(
+        uniqueId: resolvedSettings.uniqueID,
+        photoDimensions: VideoDimensionsPayload(resolvedSettings.photoDimensions),
+        expectedPhotoCount: resolvedSettings.expectedPhotoCount,
+        fastCapturePrioritizationEnabled: fastCapturePrioritizationEnabled
+    )
+}
+
 private func photoInfoPayload(from photo: AVCapturePhoto) -> PhotoInfoPayload {
     let constantColorConfidenceMapAvailable: Bool?
     let constantColorCenterWeightedMeanConfidenceLevel: Float?
@@ -75,7 +112,8 @@ private func photoInfoPayload(from photo: AVCapturePhoto) -> PhotoInfoPayload {
         pixelBufferAvailable: photo.pixelBuffer != nil,
         constantColorConfidenceMapAvailable: constantColorConfidenceMapAvailable,
         constantColorCenterWeightedMeanConfidenceLevel: constantColorCenterWeightedMeanConfidenceLevel,
-        constantColorFallbackPhoto: constantColorFallbackPhoto
+        constantColorFallbackPhoto: constantColorFallbackPhoto,
+        resolvedSettings: resolvedPhotoSettingsInfoPayload(from: photo.resolvedSettings)
     )
 }
 
@@ -150,6 +188,27 @@ public func av_capture_photo_settings_set_photo_quality_prioritization(
     return AVC_OK
 }
 
+@_cdecl("av_capture_resolved_photo_settings_release")
+public func av_capture_resolved_photo_settings_release(
+    _ resolvedSettingsPtr: UnsafeMutableRawPointer?
+) {
+    avcRelease(resolvedSettingsPtr, as: ResolvedPhotoSettingsBox.self)
+}
+
+@_cdecl("av_capture_resolved_photo_settings_info_json")
+public func av_capture_resolved_photo_settings_info_json(
+    _ resolvedSettingsPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutablePointer<CChar>? {
+    let resolvedSettings = avcResolvedPhotoSettingsBox(resolvedSettingsPtr).resolvedSettings
+    do {
+        return ffiString(try avcEncodeJSON(resolvedPhotoSettingsInfoPayload(from: resolvedSettings)))
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return nil
+    }
+}
+
 @_cdecl("av_capture_photo_release")
 public func av_capture_photo_release(_ photoPtr: UnsafeMutableRawPointer?) {
     avcRelease(photoPtr, as: PhotoBox.self)
@@ -167,4 +226,12 @@ public func av_capture_photo_info_json(
         outErrorMessage?.pointee = ffiString(error.localizedDescription)
         return nil
     }
+}
+
+@_cdecl("av_capture_photo_resolved_settings")
+public func av_capture_photo_resolved_settings(
+    _ photoPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutableRawPointer? {
+    avcRetain(ResolvedPhotoSettingsBox(avcPhotoBox(photoPtr).photo.resolvedSettings))
 }

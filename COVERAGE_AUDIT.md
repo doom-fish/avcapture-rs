@@ -3,10 +3,10 @@
 Scope: top-level symbols from `AVCapture*.h` only (`@interface`, `@protocol`, typedef enums/structs, exported constants, and top-level C functions). Deprecated or `API_UNAVAILABLE(macos)` symbols are EXEMPT. Delegate protocols are counted as VERIFIED when `avcapture-rs` exposes an equivalent Rust callback surface.
 
 SDK_PUBLIC_SYMBOLS: 112
-VERIFIED: 48
-GAPS: 64
+VERIFIED: 112
+GAPS: 0
 EXEMPT: 65
-COVERAGE_PCT: 42.9%
+COVERAGE_PCT: 100.0%
 
 ## 🟢 VERIFIED
 | Symbol | Kind | Header | Wrapped by |
@@ -25,8 +25,8 @@ COVERAGE_PCT: 42.9%
 | AVCaptureExposureMode | enum | AVCaptureDevice.h | CaptureExposureMode / CaptureDevice::{details, exposure_mode, is_exposure_mode_supported} / CaptureDeviceConfigurationLock::set_exposure_mode |
 | AVCaptureFlashMode | enum | AVCaptureDevice.h | CaptureFlashMode |
 | AVCaptureTorchMode | enum | AVCaptureDevice.h | CaptureTorchMode |
-| AVCaptureFileOutput | interface | AVCaptureFileOutput.h | MovieFileOutput (base recording properties/methods) |
-| AVCaptureFileOutputRecordingDelegate | protocol | AVCaptureFileOutput.h | MovieFileOutput::start_recording_with_handler |
+| AVCaptureFileOutput | interface | AVCaptureFileOutput.h | MovieFileOutput / AudioFileOutput (base recording properties/methods) |
+| AVCaptureFileOutputRecordingDelegate | protocol | AVCaptureFileOutput.h | MovieFileOutput::start_recording_with_handler / AudioFileOutput::start_recording_with_handler |
 | AVCaptureMovieFileOutput | interface | AVCaptureFileOutput.h | MovieFileOutput / MovieFileOutputInfo |
 | AVCaptureDeviceInput | interface | AVCaptureInput.h | DeviceInput / DeviceInputInfo |
 | AVCaptureInput | interface | AVCaptureInput.h | CaptureInputRef / CaptureInputInfo |
@@ -37,7 +37,7 @@ COVERAGE_PCT: 42.9%
 | AVCaptureOutput | interface | AVCaptureOutputBase.h | CaptureOutputRef / CaptureOutputInfo |
 | AVCapturePhotoCaptureDelegate | protocol | AVCapturePhotoOutput.h | PhotoOutput::capture_photo |
 | AVCapturePhotoOutput | interface | AVCapturePhotoOutput.h | PhotoOutput / PhotoOutputInfo |
-| AVCapturePhotoOutputCaptureReadiness | enum | AVCapturePhotoOutput.h | PhotoOutput::capture_readiness / PhotoOutputInfo::capture_readiness (raw i32) |
+| AVCapturePhotoOutputCaptureReadiness | enum | AVCapturePhotoOutput.h | PhotoOutputCaptureReadiness / PhotoOutput::capture_readiness / PhotoOutputInfo::capture_readiness |
 | AVCapturePhoto | interface | AVCapturePhotoOutput.h | Photo / PhotoInfo / PhotoCaptureEvent::photo |
 | AVCapturePhotoQualityPrioritization | enum | AVCapturePhotoOutput.h | PhotoQualityPrioritization / PhotoSettings / PhotoOutput |
 | AVCapturePhotoSettings | interface | AVCapturePhotoOutput.h | PhotoSettings / PhotoSettingsInfo / PhotoOutput::capture_photo_with_settings |
@@ -60,73 +60,76 @@ COVERAGE_PCT: 42.9%
 | AVCaptureVideoDataOutputSampleBufferDelegate | protocol | AVCaptureVideoDataOutput.h | VideoDataOutput::set_sample_buffer_handler |
 | AVCaptureVideoPreviewLayer | interface | AVCaptureVideoPreviewLayer.h | VideoPreviewLayer / VideoPreviewLayerInfo |
 
-## 🔴 GAPS
-| Symbol | Kind | Header | Notes |
+## 🟢 VERIFIED (continued)
+| Symbol | Kind | Header | Wrapped by |
 | --- | --- | --- | --- |
-| AVCaptureAudioPreviewOutput | interface | AVCaptureAudioPreviewOutput.h | No audio-preview output wrapper. |
-| AVCaptureControl | interface | AVCaptureControl.h | No capture-control UI wrappers. |
-| AVCaptureDeskViewApplication | interface | AVCaptureDeskViewApplication.h | No Desk View application/configuration wrapper. |
-| AVCaptureDeskViewApplicationLaunchConfiguration | interface | AVCaptureDeskViewApplication.h | No Desk View application/configuration wrapper. |
-| AVCaptureAutoFocusSystem | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureCameraLensSmudgeDetectionStatus | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureCenterStageControlMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureCinematicVideoFocusMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureColorSpace | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureDeviceInputSource | interface | AVCaptureDevice.h | No public wrapper for device input sources. |
-| AVCaptureDeviceRotationCoordinator | interface | AVCaptureDevice.h | Connection rotation angle is exposed, but not the coordinator type. |
-| AVCaptureDeviceTransportControlsPlaybackMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureDeviceWasConnectedNotification | constant | AVCaptureDevice.h | No notification/observer surface. |
-| AVCaptureDeviceWasDisconnectedNotification | constant | AVCaptureDevice.h | No notification/observer surface. |
-| AVCaptureFocusMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureMaxAvailableTorchLevel | constant | AVCaptureDevice.h | Torch mode is wrapped, but level-setting APIs/constants are not. |
-| AVCaptureMicrophoneMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCapturePrimaryConstituentDeviceSwitchingBehavior | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureSceneMonitoringStatusNotEnoughLight | constant | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureSystemUserInterface | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureWhiteBalanceMode | enum | AVCaptureDevice.h | Device wrapper omits this control/status surface. |
-| AVCaptureExternalDisplayConfiguration | interface | AVCaptureExternalDisplayConfigurator.h | No external-display configuration wrapper. |
-| AVCaptureExternalDisplayConfigurator | interface | AVCaptureExternalDisplayConfigurator.h | No external-display configuration wrapper. |
-| AVCaptureAudioFileOutput | interface | AVCaptureFileOutput.h | Movie file output is wrapped; audio file output is not. |
-| AVCaptureFileOutputDelegate | protocol | AVCaptureFileOutput.h | Recording delegate callback is wrapped; base file-output delegate is not. |
-| AVCaptureIndexPicker | interface | AVCaptureIndexPicker.h | No capture-control UI wrappers. |
-| AVCaptureInputPortFormatDescriptionDidChangeNotification | constant | AVCaptureInput.h | No notification/observer surface. |
-| AVCaptureMultichannelAudioMode | enum | AVCaptureInput.h | DeviceInput wrapper does not expose multichannel audio mode. |
-| AVCaptureOutputDataDroppedReason | enum | AVCaptureOutputBase.h | No dropped-sample reason surface. |
-| AVCapturePhotoOutputReadinessCoordinator | interface | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
-| AVCapturePhotoOutputReadinessCoordinatorDelegate | protocol | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
-| AVCaptureResolvedPhotoSettings | interface | AVCapturePhotoOutput.h | Photo output is wrapped, but this specific photo/settings/readiness type is not. |
-| AVCaptureReactionEffectState | interface | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionSystemImageNameForType | function | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionTypeBalloons | constant | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionTypeConfetti | constant | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionTypeFireworks | constant | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionTypeHeart | constant | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionTypeLasers | constant | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionTypeRain | constant | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionTypeThumbsDown | constant | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureReactionTypeThumbsUp | constant | AVCaptureReactions.h | Reaction types/effects are not exposed. |
-| AVCaptureAudioChannel | interface | AVCaptureSession.h | Connection wrapper omits audio-channel inspection. |
-| AVCaptureSessionControlsDelegate | protocol | AVCaptureSession.h | No session-controls/deferred-start delegate wrappers. |
-| AVCaptureSessionDeferredStartDelegate | protocol | AVCaptureSession.h | No session-controls/deferred-start delegate wrappers. |
-| AVCaptureSessionDidStartRunningNotification | constant | AVCaptureSession.h | No notification/observer surface. |
-| AVCaptureSessionDidStopRunningNotification | constant | AVCaptureSession.h | No notification/observer surface. |
-| AVCaptureSessionErrorKey | constant | AVCaptureSession.h | No notification/observer surface. |
-| AVCaptureSessionInterruptionEndedNotification | constant | AVCaptureSession.h | No notification/observer surface. |
-| AVCaptureSessionRuntimeErrorNotification | constant | AVCaptureSession.h | No notification/observer surface. |
-| AVCaptureSessionWasInterruptedNotification | constant | AVCaptureSession.h | No notification/observer surface. |
-| AVCaptureSlider | interface | AVCaptureSlider.h | No capture-control UI wrappers. |
-| AVCaptureSystemExposureBiasSlider | interface | AVCaptureSystemExposureBiasSlider.h | No capture-control UI wrappers. |
-| AVCaptureSystemZoomSlider | interface | AVCaptureSystemZoomSlider.h | No capture-control UI wrappers. |
-| AVCaptureTimecode | struct | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureTimecodeAdvancedByFrames | function | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureTimecodeCreateMetadataSampleBufferAssociatedWithPresentationTimeStamp | function | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureTimecodeCreateMetadataSampleBufferForDuration | function | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureTimecodeGenerator | interface | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureTimecodeGeneratorDelegate | protocol | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureTimecodeGeneratorSynchronizationStatus | enum | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureTimecodeSource | interface | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
-| AVCaptureTimecodeSourceType | enum | AVCaptureTimecodeGenerator.h | Timecode generation APIs are not wrapped. |
+| AVCaptureAudioPreviewOutput | interface | AVCaptureAudioPreviewOutput.h | AudioPreviewOutput / AudioPreviewOutputInfo |
+| AVCaptureControl | interface | AVCaptureControl.h | CaptureControl / CaptureControlInfo |
+| AVCaptureDeskViewApplication | interface | AVCaptureDeskViewApplication.h | DeskViewApplication / DeskViewApplicationInfo |
+| AVCaptureDeskViewApplicationLaunchConfiguration | interface | AVCaptureDeskViewApplication.h | DeskViewApplicationLaunchConfiguration / DeskViewApplicationLaunchConfigurationInfo |
+| AVCaptureAutoFocusSystem | enum | AVCaptureDevice.h | CaptureAutoFocusSystem / CaptureDevice::{details, auto_focus_system} |
+| AVCaptureCameraLensSmudgeDetectionStatus | enum | AVCaptureDevice.h | CaptureCameraLensSmudgeDetectionStatus / CaptureDevice::{details, camera_lens_smudge_detection_status} |
+| AVCaptureCenterStageControlMode | enum | AVCaptureDevice.h | CaptureCenterStageControlMode / CaptureDevice::center_stage_control_mode |
+| AVCaptureCinematicVideoFocusMode | enum | AVCaptureDevice.h | CaptureCinematicVideoFocusMode (typed enum export) |
+| AVCaptureColorSpace | enum | AVCaptureDevice.h | CaptureColorSpace / CaptureDevice::{details, active_color_space, supported_color_spaces} |
+| AVCaptureDeviceInputSource | interface | AVCaptureDevice.h | CaptureDeviceInputSource / CaptureDeviceInputSourceInfo / CaptureDevice::{input_sources, active_input_source} |
+| AVCaptureDeviceRotationCoordinator | interface | AVCaptureDevice.h | CaptureDeviceRotationCoordinator / CaptureDeviceRotationCoordinatorInfo / CaptureDevice::rotation_coordinator |
+| AVCaptureDeviceTransportControlsPlaybackMode | enum | AVCaptureDevice.h | CaptureDeviceTransportControlsPlaybackMode / CaptureDevice::{details, transport_controls_playback_mode} |
+| AVCaptureDeviceWasConnectedNotification | constant | AVCaptureDevice.h | CaptureDevice::WAS_CONNECTED_NOTIFICATION |
+| AVCaptureDeviceWasDisconnectedNotification | constant | AVCaptureDevice.h | CaptureDevice::WAS_DISCONNECTED_NOTIFICATION |
+| AVCaptureFocusMode | enum | AVCaptureDevice.h | CaptureFocusMode / CaptureDevice::{details, focus_mode, is_focus_mode_supported} / CaptureDeviceConfigurationLock::set_focus_mode |
+| AVCaptureMaxAvailableTorchLevel | constant | AVCaptureDevice.h | CaptureDevice::max_available_torch_level |
+| AVCaptureMicrophoneMode | enum | AVCaptureDevice.h | CaptureMicrophoneMode / CaptureDevice::{preferred_microphone_mode, active_microphone_mode} |
+| AVCapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions | enum | AVCaptureDevice.h | CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions / CaptureDevice::{details, primary_constituent_device_restricted_switching_behavior_conditions, active_primary_constituent_device_restricted_switching_behavior_conditions} |
+| AVCapturePrimaryConstituentDeviceSwitchingBehavior | enum | AVCaptureDevice.h | CapturePrimaryConstituentDeviceSwitchingBehavior / CaptureDevice::{details, primary_constituent_device_switching_behavior, active_primary_constituent_device_switching_behavior} |
+| AVCaptureSceneMonitoringStatusNotEnoughLight | constant | AVCaptureDevice.h | CaptureSceneMonitoringStatus::NotEnoughLight / CaptureDevice::scene_monitoring_status_not_enough_light |
+| AVCaptureSystemUserInterface | enum | AVCaptureDevice.h | CaptureSystemUserInterface / CaptureDevice::show_system_user_interface |
+| AVCaptureWhiteBalanceMode | enum | AVCaptureDevice.h | CaptureWhiteBalanceMode / CaptureDevice::{details, white_balance_mode, is_white_balance_mode_supported} / CaptureDeviceConfigurationLock::set_white_balance_mode |
+| AVCaptureExternalDisplayConfiguration | interface | AVCaptureExternalDisplayConfigurator.h | ExternalDisplayConfiguration / ExternalDisplayConfigurationInfo |
+| AVCaptureExternalDisplayConfigurator | interface | AVCaptureExternalDisplayConfigurator.h | ExternalDisplayConfigurator / ExternalDisplayConfiguratorInfo / VideoPreviewLayer::external_display_configurator |
+| AVCaptureAudioFileOutput | interface | AVCaptureFileOutput.h | AudioFileOutput / AudioFileOutputInfo |
+| AVCaptureFileOutputDelegate | protocol | AVCaptureFileOutput.h | MovieFileOutput::set_sample_buffer_boundary_handler / AudioFileOutput::set_sample_buffer_boundary_handler |
+| AVCaptureIndexPicker | interface | AVCaptureIndexPicker.h | CaptureIndexPicker / CaptureIndexPickerInfo |
+| AVCaptureInputPortFormatDescriptionDidChangeNotification | constant | AVCaptureInput.h | DeviceInput::INPUT_PORT_FORMAT_DESCRIPTION_DID_CHANGE_NOTIFICATION |
+| AVCaptureMultichannelAudioMode | enum | AVCaptureInput.h | CaptureMultichannelAudioMode / DeviceInput::{info, multichannel_audio_mode, is_multichannel_audio_mode_supported, set_multichannel_audio_mode} |
+| AVCaptureOutputDataDroppedReason | enum | AVCaptureOutputBase.h | AVCaptureOutputDataDroppedReason / CaptureOutputDataDroppedReason / {AudioDataOutput, VideoDataOutput}::last_dropped_sample_reason |
+| AVCapturePhotoOutputReadinessCoordinator | interface | AVCapturePhotoOutput.h | PhotoOutputReadinessCoordinator / PhotoOutput::readiness_coordinator |
+| AVCapturePhotoOutputReadinessCoordinatorDelegate | protocol | AVCapturePhotoOutput.h | PhotoOutputReadinessCoordinator::set_capture_readiness_handler |
+| AVCaptureResolvedPhotoSettings | interface | AVCapturePhotoOutput.h | ResolvedPhotoSettings / ResolvedPhotoSettingsInfo / Photo::resolved_settings |
+| AVCaptureReactionEffectState | interface | AVCaptureReactions.h | CaptureReactionEffectState / CaptureDevice::reaction_effects_in_progress |
+| AVCaptureReactionSystemImageNameForType | function | AVCaptureReactions.h | CaptureReactionType::system_image_name |
+| AVCaptureReactionTypeBalloons | constant | AVCaptureReactions.h | CaptureReactionType::Balloons / CaptureDevice::reaction_type_balloons |
+| AVCaptureReactionTypeConfetti | constant | AVCaptureReactions.h | CaptureReactionType::Confetti / CaptureDevice::reaction_type_confetti |
+| AVCaptureReactionTypeFireworks | constant | AVCaptureReactions.h | CaptureReactionType::Fireworks / CaptureDevice::reaction_type_fireworks |
+| AVCaptureReactionTypeHeart | constant | AVCaptureReactions.h | CaptureReactionType::Heart / CaptureDevice::reaction_type_heart |
+| AVCaptureReactionTypeLasers | constant | AVCaptureReactions.h | CaptureReactionType::Lasers / CaptureDevice::reaction_type_lasers |
+| AVCaptureReactionTypeRain | constant | AVCaptureReactions.h | CaptureReactionType::Rain / CaptureDevice::reaction_type_rain |
+| AVCaptureReactionTypeThumbsDown | constant | AVCaptureReactions.h | CaptureReactionType::ThumbsDown / CaptureDevice::reaction_type_thumbs_down |
+| AVCaptureReactionTypeThumbsUp | constant | AVCaptureReactions.h | CaptureReactionType::ThumbsUp / CaptureDevice::reaction_type_thumbs_up |
+| AVCaptureAudioChannel | interface | AVCaptureSession.h | CaptureAudioChannel / CaptureAudioChannelInfo / CaptureConnection::{audio_channels, audio_channels_info} |
+| AVCaptureSessionControlsDelegate | protocol | AVCaptureSession.h | CaptureSession::set_controls_delegate_handler |
+| AVCaptureSessionDeferredStartDelegate | protocol | AVCaptureSession.h | CaptureSession::set_deferred_start_delegate_handler |
+| AVCaptureSessionDidStartRunningNotification | constant | AVCaptureSession.h | CaptureSession::DID_START_RUNNING_NOTIFICATION |
+| AVCaptureSessionDidStopRunningNotification | constant | AVCaptureSession.h | CaptureSession::DID_STOP_RUNNING_NOTIFICATION |
+| AVCaptureSessionErrorKey | constant | AVCaptureSession.h | CaptureSession::ERROR_KEY |
+| AVCaptureSessionInterruptionEndedNotification | constant | AVCaptureSession.h | CaptureSession::INTERRUPTION_ENDED_NOTIFICATION |
+| AVCaptureSessionRuntimeErrorNotification | constant | AVCaptureSession.h | CaptureSession::RUNTIME_ERROR_NOTIFICATION |
+| AVCaptureSessionWasInterruptedNotification | constant | AVCaptureSession.h | CaptureSession::WAS_INTERRUPTED_NOTIFICATION |
+| AVCaptureSlider | interface | AVCaptureSlider.h | CaptureSlider / CaptureSliderInfo |
+| AVCaptureSystemExposureBiasSlider | interface | AVCaptureSystemExposureBiasSlider.h | CaptureSystemExposureBiasSlider / CaptureSession::system_exposure_bias_slider |
+| AVCaptureSystemZoomSlider | interface | AVCaptureSystemZoomSlider.h | CaptureSystemZoomSlider / CaptureSession::system_zoom_slider |
+| AVCaptureTimecode | struct | AVCaptureTimecodeGenerator.h | CaptureTimecode |
+| AVCaptureTimecodeAdvancedByFrames | function | AVCaptureTimecodeGenerator.h | CaptureTimecode::advanced_by_frames |
+| AVCaptureTimecodeCreateMetadataSampleBufferAssociatedWithPresentationTimeStamp | function | AVCaptureTimecodeGenerator.h | CaptureTimecode::create_metadata_sample_buffer_associated_with_presentation_time_stamp |
+| AVCaptureTimecodeCreateMetadataSampleBufferForDuration | function | AVCaptureTimecodeGenerator.h | CaptureTimecode::create_metadata_sample_buffer_for_duration |
+| AVCaptureTimecodeGenerator | interface | AVCaptureTimecodeGenerator.h | CaptureTimecodeGenerator / VideoDataOutput::timecode_generator |
+| AVCaptureTimecodeGeneratorDelegate | protocol | AVCaptureTimecodeGenerator.h | CaptureTimecodeGenerator::set_delegate_handler |
+| AVCaptureTimecodeGeneratorSynchronizationStatus | enum | AVCaptureTimecodeGenerator.h | CaptureTimecodeGeneratorSynchronizationStatus |
+| AVCaptureTimecodeSource | interface | AVCaptureTimecodeGenerator.h | CaptureTimecodeSource / CaptureTimecodeSourceInfo / VideoDataOutput::{frame_count_timecode_source, real_time_clock_timecode_source} |
+| AVCaptureTimecodeSourceType | enum | AVCaptureTimecodeGenerator.h | CaptureTimecodeSourceType |
+
+## 🔴 GAPS
+_None. All audited macOS-available top-level `AVCapture*` symbols are now wrapped._
 
 ## ⏭️ EXEMPT
 | Symbol | Kind | Header | Reason | SDK attribute |

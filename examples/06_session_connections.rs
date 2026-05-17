@@ -36,6 +36,10 @@ fn main() -> support::ExampleResult {
     println!("video output info: {:?}", video_output.output_info()?);
     for connection in session.connections()? {
         println!("connection: {:?}", connection.info()?);
+        println!(
+            "connection audio channels: {:?}",
+            connection.audio_channels_info()?
+        );
     }
     Ok(())
 }

@@ -19,6 +19,69 @@ fn main() -> support::ExampleResult {
         "audio devices: {}",
         CaptureDevice::devices(&MediaType::Audio)?.len()
     );
+    println!(
+        "device notifications: {}, {}",
+        CaptureDevice::WAS_CONNECTED_NOTIFICATION,
+        CaptureDevice::WAS_DISCONNECTED_NOTIFICATION
+    );
+    println!(
+        "input port format notification: {}",
+        DeviceInput::INPUT_PORT_FORMAT_DESCRIPTION_DID_CHANGE_NOTIFICATION
+    );
+    println!(
+        "scene monitoring status constant: {}",
+        String::from(CaptureDevice::scene_monitoring_status_not_enough_light())
+    );
+    println!(
+        "max available torch level sentinel: {}",
+        CaptureDevice::max_available_torch_level()
+    );
+    println!(
+        "center stage control mode: {:?}",
+        CaptureDevice::center_stage_control_mode()
+    );
+    println!(
+        "center stage enabled: {:?}",
+        CaptureDevice::center_stage_enabled()
+    );
+    println!(
+        "preferred microphone mode: {:?}",
+        CaptureDevice::preferred_microphone_mode()
+    );
+    println!(
+        "active microphone mode: {:?}",
+        CaptureDevice::active_microphone_mode()
+    );
+    println!(
+        "reaction effects enabled: {:?}",
+        CaptureDevice::reaction_effects_enabled()
+    );
+    println!(
+        "reaction gestures enabled: {:?}",
+        CaptureDevice::reaction_effect_gestures_enabled()
+    );
+
+    if let Some(device) = support::default_video_or_audio_device()? {
+        println!("default device info: {:?}", device.info()?);
+        println!("default device details: {:?}", device.details()?);
+        println!(
+            "default device input sources: {:?}",
+            device.input_source_infos()?
+        );
+        if let Some(rotation_coordinator) = device.rotation_coordinator()? {
+            println!(
+                "rotation coordinator info: {:?}",
+                rotation_coordinator.info()?
+            );
+        }
+        for reaction_type in device.available_reaction_types()? {
+            println!(
+                "reaction type {:?} system image: {}",
+                reaction_type,
+                reaction_type.system_image_name()?
+            );
+        }
+    }
 
     let session = CaptureSession::new()?;
     session.begin_configuration();
@@ -77,6 +140,10 @@ fn main() -> support::ExampleResult {
     println!("session connections: {}", session.connection_count()?);
     if let Some(connection) = session.connections()?.first() {
         println!("first connection info: {:?}", connection.info()?);
+        println!(
+            "first connection audio channels: {:?}",
+            connection.audio_channels_info()?
+        );
     }
     println!("video output info: {:?}", video_output.info()?);
     println!("audio output info: {:?}", audio_output.info()?);

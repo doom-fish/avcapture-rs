@@ -18,14 +18,7 @@ public func av_capture_session_info_json(
     _ sessionPtr: UnsafeMutableRawPointer,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> UnsafeMutablePointer<CChar>? {
-    let session = avcSessionBox(sessionPtr).session
-    let payload = CaptureSessionInfoPayload(
-        sessionPreset: avcEncodeSessionPreset(session.sessionPreset),
-        inputCount: session.inputs.count,
-        outputCount: session.outputs.count,
-        connectionCount: session.connections.count,
-        isRunning: session.isRunning
-    )
+    let payload = avcSessionInfoPayload(from: avcSessionBox(sessionPtr))
     do {
         return ffiString(try avcEncodeJSON(payload))
     } catch {

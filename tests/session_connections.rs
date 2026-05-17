@@ -32,5 +32,15 @@ fn session_connections_smoke() -> common::TestResult {
     let info = session.info()?;
     let connections = session.connections()?;
     assert_eq!(info.connection_count, connections.len());
+    for connection in &connections {
+        let connection_info = connection.info()?;
+        let audio_channel_infos = connection.audio_channels_info()?;
+        assert_eq!(connection_info.audio_channels, audio_channel_infos);
+        assert_eq!(
+            connection_info.audio_channels.len(),
+            connection.audio_channel_count()?
+        );
+        let _ = connection.audio_channels()?;
+    }
     Ok(())
 }

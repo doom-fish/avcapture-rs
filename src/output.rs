@@ -2,7 +2,9 @@
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use serde::{Deserialize, Serialize};
+use std::fmt;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::connection::CaptureConnection;
 use crate::device::MediaType;
@@ -14,7 +16,70 @@ use crate::helpers::{cstring, parse_json_and_free};
 #[serde(rename_all = "camelCase")]
 pub struct CaptureOutputInfo {
     pub connection_count: usize,
+    pub deferred_start_supported: Option<bool>,
+    pub deferred_start_enabled: Option<bool>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AVCaptureOutputDataDroppedReason {
+    None,
+    LateData,
+    OutOfBuffers,
+    Discontinuity,
+    Unknown(String),
+}
+
+impl AVCaptureOutputDataDroppedReason {
+    #[must_use]
+    pub fn from_raw(raw: impl Into<String>) -> Self {
+        let raw = raw.into();
+        match raw.as_str() {
+            "none" => Self::None,
+            "lateData" | "frameWasLate" => Self::LateData,
+            "outOfBuffers" => Self::OutOfBuffers,
+            "discontinuity" => Self::Discontinuity,
+            _ => Self::Unknown(raw),
+        }
+    }
+
+    #[must_use]
+    pub fn as_raw(&self) -> &str {
+        match self {
+            Self::None => "none",
+            Self::LateData => "lateData",
+            Self::OutOfBuffers => "outOfBuffers",
+            Self::Discontinuity => "discontinuity",
+            Self::Unknown(raw) => raw,
+        }
+    }
+}
+
+impl Serialize for AVCaptureOutputDataDroppedReason {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_raw())
+    }
+}
+
+impl<'de> Deserialize<'de> for AVCaptureOutputDataDroppedReason {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(Self::from_raw(raw))
+    }
+}
+
+impl fmt::Display for AVCaptureOutputDataDroppedReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_raw())
+    }
+}
+
+pub type CaptureOutputDataDroppedReason = AVCaptureOutputDataDroppedReason;
 
 pub trait CaptureOutputRef {
     fn output_ptr(&self) -> *mut c_void;
@@ -32,6 +97,14 @@ pub trait CaptureOutputRef {
         media_type: &MediaType,
     ) -> Result<Option<CaptureConnection>, AVCaptureError> {
         connection_from_output_ptr(self.output_ptr(), media_type)
+    }
+
+    fn deferred_start_supported(&self) -> Result<Option<bool>, AVCaptureError> {
+        Ok(self.output_info()?.deferred_start_supported)
+    }
+
+    fn deferred_start_enabled(&self) -> Result<Option<bool>, AVCaptureError> {
+        Ok(self.output_info()?.deferred_start_enabled)
     }
 }
 

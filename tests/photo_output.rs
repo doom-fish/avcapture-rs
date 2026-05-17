@@ -14,6 +14,12 @@ fn photo_output_smoke() -> common::TestResult {
         output.max_photo_quality_prioritization()?,
         info.max_photo_quality_prioritization
     );
+    assert_eq!(
+        output
+            .capture_readiness()?
+            .map(|readiness| readiness.as_raw()),
+        info.capture_readiness.map(|readiness| readiness.as_raw())
+    );
     assert!(!output.callback_installed()?);
 
     let settings = PhotoSettings::new()?;
@@ -33,14 +39,35 @@ fn photo_output_smoke() -> common::TestResult {
         output.set_max_photo_quality_prioritization(priority)?;
     }
 
+    let readiness_err = output
+        .readiness_coordinator()
+        .expect_err("disconnected photo output should refuse readiness coordinator creation");
+    assert!(matches!(
+        readiness_err,
+        AVCaptureError::OutputError(_) | AVCaptureError::OperationFailed(_)
+    ));
+
     let err = output
         .capture_photo_with_settings(&settings, |event| {
             if let Some(photo) = event.photo.as_ref() {
-                let _ = photo.info();
+                let photo_info = photo.info().expect("photo info should decode");
+                assert_eq!(
+                    photo_info.resolved_settings.unique_id,
+                    event.resolved_settings.unique_id
+                );
+                let resolved_settings = photo
+                    .resolved_settings()
+                    .expect("resolved settings should be available")
+                    .info()
+                    .expect("resolved settings info should decode");
+                assert_eq!(
+                    resolved_settings.unique_id,
+                    event.resolved_settings.unique_id
+                );
             }
             eprintln!(
-                "unexpected photo capture event: unique_id={}, error={:?}",
-                event.unique_id, event.error,
+                "unexpected photo capture event: unique_id={}, error={:?}, resolved_settings={:?}",
+                event.unique_id, event.error, event.resolved_settings,
             );
         })
         .expect_err("disconnected photo output should refuse capture requests");

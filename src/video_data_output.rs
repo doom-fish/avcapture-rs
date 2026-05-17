@@ -8,10 +8,20 @@ use apple_cf::cm::CMSampleBuffer;
 use apple_cf::cv::CVPixelBuffer;
 use serde::{Deserialize, Serialize};
 
+#[path = "video_data_output_timecode.rs"]
+mod timecode_support;
+
+pub use self::timecode_support::{
+    CaptureTimecode, CaptureTimecodeGenerator, CaptureTimecodeGeneratorEvent,
+    CaptureTimecodeGeneratorInfo, CaptureTimecodeGeneratorSynchronizationStatus,
+    CaptureTimecodeSource, CaptureTimecodeSourceInfo, CaptureTimecodeSourceType,
+    TimecodeMetadataSampleBuffer,
+};
+
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{optional_json_cstring, parse_json_and_free};
-use crate::output::CaptureOutputRef;
+use crate::output::{AVCaptureOutputDataDroppedReason, CaptureOutputRef};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +62,8 @@ pub struct VideoDataOutputInfo {
     pub available_video_cv_pixel_format_types: Vec<u32>,
     pub callback_installed: bool,
     pub video_settings: Option<VideoOutputSettings>,
+    pub dropped_sample_count: usize,
+    pub last_dropped_sample_reason: Option<AVCaptureOutputDataDroppedReason>,
 }
 
 struct VideoCallbackState {
@@ -117,6 +129,16 @@ impl VideoDataOutput {
 
     pub fn callback_installed(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.callback_installed)
+    }
+
+    pub fn dropped_sample_count(&self) -> Result<usize, AVCaptureError> {
+        Ok(self.info()?.dropped_sample_count)
+    }
+
+    pub fn last_dropped_sample_reason(
+        &self,
+    ) -> Result<Option<AVCaptureOutputDataDroppedReason>, AVCaptureError> {
+        Ok(self.info()?.last_dropped_sample_reason)
     }
 
     pub fn set_video_settings(

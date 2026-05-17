@@ -22,9 +22,19 @@ extern "C" {
         out_error_message: *mut *mut c_char,
     ) -> i32;
 
+    pub fn av_capture_resolved_photo_settings_release(resolved_settings: *mut c_void);
+    pub fn av_capture_resolved_photo_settings_info_json(
+        resolved_settings: *mut c_void,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_char;
+
     pub fn av_capture_photo_release(photo: *mut c_void);
     pub fn av_capture_photo_info_json(
         photo: *mut c_void,
         out_error_message: *mut *mut c_char,
     ) -> *mut c_char;
+    pub fn av_capture_photo_resolved_settings(
+        photo: *mut c_void,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_void;
 }

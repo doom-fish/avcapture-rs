@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::device::CaptureFlashMode;
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
-use crate::helpers::{cm_time_serde, parse_json_and_free};
+use crate::helpers::{cm_time_serde, parse_json_and_free, VideoDimensions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(from = "i32", into = "i32")]
@@ -64,6 +64,15 @@ pub struct PhotoSettingsInfo {
     pub photo_quality_prioritization: Option<PhotoQualityPrioritization>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedPhotoSettingsInfo {
+    pub unique_id: i64,
+    pub photo_dimensions: VideoDimensions,
+    pub expected_photo_count: usize,
+    pub fast_capture_prioritization_enabled: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PhotoInfo {
@@ -75,6 +84,7 @@ pub struct PhotoInfo {
     pub constant_color_confidence_map_available: Option<bool>,
     pub constant_color_center_weighted_mean_confidence_level: Option<f32>,
     pub constant_color_fallback_photo: Option<bool>,
+    pub resolved_settings: ResolvedPhotoSettingsInfo,
 }
 
 /// Safe wrapper around `AVCapturePhotoSettings`.
@@ -170,6 +180,53 @@ impl PhotoSettings {
     }
 }
 
+/// Safe wrapper around `AVCaptureResolvedPhotoSettings`.
+#[derive(Debug)]
+pub struct ResolvedPhotoSettings {
+    pub(crate) ptr: *mut c_void,
+}
+
+impl Drop for ResolvedPhotoSettings {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { ffi::photo::av_capture_resolved_photo_settings_release(self.ptr) };
+            self.ptr = ptr::null_mut();
+        }
+    }
+}
+
+impl ResolvedPhotoSettings {
+    pub(crate) const fn from_raw(ptr: *mut c_void) -> Self {
+        Self { ptr }
+    }
+
+    pub fn info(&self) -> Result<ResolvedPhotoSettingsInfo, AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let json_ptr =
+            unsafe { ffi::photo::av_capture_resolved_photo_settings_info_json(self.ptr, &mut err) };
+        if json_ptr.is_null() {
+            return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
+        }
+        parse_json_and_free(json_ptr)
+    }
+
+    pub fn unique_id(&self) -> Result<i64, AVCaptureError> {
+        Ok(self.info()?.unique_id)
+    }
+
+    pub fn photo_dimensions(&self) -> Result<VideoDimensions, AVCaptureError> {
+        Ok(self.info()?.photo_dimensions)
+    }
+
+    pub fn expected_photo_count(&self) -> Result<usize, AVCaptureError> {
+        Ok(self.info()?.expected_photo_count)
+    }
+
+    pub fn fast_capture_prioritization_enabled(&self) -> Result<Option<bool>, AVCaptureError> {
+        Ok(self.info()?.fast_capture_prioritization_enabled)
+    }
+}
+
 /// Safe wrapper around `AVCapturePhoto`.
 #[derive(Debug)]
 pub struct Photo {
@@ -213,5 +270,18 @@ impl Photo {
 
     pub fn pixel_buffer_available(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.pixel_buffer_available)
+    }
+
+    pub fn resolved_settings_info(&self) -> Result<ResolvedPhotoSettingsInfo, AVCaptureError> {
+        Ok(self.info()?.resolved_settings)
+    }
+
+    pub fn resolved_settings(&self) -> Result<ResolvedPhotoSettings, AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let ptr = unsafe { ffi::photo::av_capture_photo_resolved_settings(self.ptr, &mut err) };
+        if ptr.is_null() {
+            return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
+        }
+        Ok(ResolvedPhotoSettings::from_raw(ptr))
     }
 }

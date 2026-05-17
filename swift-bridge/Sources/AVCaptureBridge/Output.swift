@@ -1,8 +1,52 @@
 import AVFoundation
+import CoreMedia
 import Foundation
 
-private func avcOutputInfoPayload(from output: AVCaptureOutput) -> CaptureOutputInfoPayload {
-    CaptureOutputInfoPayload(connectionCount: output.connections.count)
+private struct CaptureOutputInfoSnapshot: Codable {
+    let connectionCount: Int
+    let deferredStartSupported: Bool?
+    let deferredStartEnabled: Bool?
+}
+
+func avcDroppedSampleReason(from sampleBuffer: CMSampleBuffer) -> String? {
+    guard let attachments = CMCopyDictionaryOfAttachments(
+        allocator: kCFAllocatorDefault,
+        target: sampleBuffer,
+        attachmentMode: kCMAttachmentMode_ShouldPropagate
+    ) as? [CFString: Any],
+    let rawReason = attachments[kCMSampleBufferAttachmentKey_DroppedFrameReason] as? String
+    else {
+        return nil
+    }
+
+    if rawReason == (kCMSampleBufferDroppedFrameReason_FrameWasLate as String) {
+        return "lateData"
+    }
+    if rawReason == (kCMSampleBufferDroppedFrameReason_OutOfBuffers as String) {
+        return "outOfBuffers"
+    }
+    if rawReason == (kCMSampleBufferDroppedFrameReason_Discontinuity as String) {
+        return "discontinuity"
+    }
+    return rawReason
+}
+
+private func avcOutputInfoPayload(from output: AVCaptureOutput) -> CaptureOutputInfoSnapshot {
+    let deferredStartSupported: Bool?
+    let deferredStartEnabled: Bool?
+    if #available(macOS 26.0, *) {
+        let supported = output.isDeferredStartSupported
+        deferredStartSupported = supported
+        deferredStartEnabled = supported ? output.isDeferredStartEnabled : nil
+    } else {
+        deferredStartSupported = nil
+        deferredStartEnabled = nil
+    }
+    return CaptureOutputInfoSnapshot(
+        connectionCount: output.connections.count,
+        deferredStartSupported: deferredStartSupported,
+        deferredStartEnabled: deferredStartEnabled
+    )
 }
 
 @_cdecl("av_capture_output_info_json")

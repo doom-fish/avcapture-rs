@@ -1,6 +1,13 @@
 import AVFoundation
 import Foundation
 
+private struct CaptureAudioChannelInfoPayload: Codable {
+    let averagePowerLevel: Float
+    let peakHoldLevel: Float
+    let volume: Float?
+    let enabled: Bool?
+}
+
 private struct CaptureConnectionInfoPayload: Codable {
     let inputPortCount: Int
     let mediaTypes: [String]
@@ -14,6 +21,28 @@ private struct CaptureConnectionInfoPayload: Codable {
     let videoMinFrameDuration: CMTimePayload
     let supportsVideoMaxFrameDuration: Bool
     let videoMaxFrameDuration: CMTimePayload
+    let audioChannels: [CaptureAudioChannelInfoPayload]
+}
+
+final class AudioChannelBox: NSObject {
+    let audioChannel: AVCaptureAudioChannel
+
+    init(_ audioChannel: AVCaptureAudioChannel) {
+        self.audioChannel = audioChannel
+    }
+}
+
+private func avcAudioChannelBox(_ ptr: UnsafeMutableRawPointer) -> AudioChannelBox {
+    avcUnretained(ptr, as: AudioChannelBox.self)
+}
+
+private func avcAudioChannelInfoPayload(from audioChannel: AVCaptureAudioChannel) -> CaptureAudioChannelInfoPayload {
+    CaptureAudioChannelInfoPayload(
+        averagePowerLevel: audioChannel.averagePowerLevel,
+        peakHoldLevel: audioChannel.peakHoldLevel,
+        volume: audioChannel.volume,
+        enabled: audioChannel.isEnabled
+    )
 }
 
 private func avcConnectionInfoPayload(from connection: AVCaptureConnection) -> CaptureConnectionInfoPayload {
@@ -42,7 +71,8 @@ private func avcConnectionInfoPayload(from connection: AVCaptureConnection) -> C
         supportsVideoMinFrameDuration: connection.isVideoMinFrameDurationSupported,
         videoMinFrameDuration: CMTimePayload(connection.videoMinFrameDuration),
         supportsVideoMaxFrameDuration: connection.isVideoMaxFrameDurationSupported,
-        videoMaxFrameDuration: CMTimePayload(connection.videoMaxFrameDuration)
+        videoMaxFrameDuration: CMTimePayload(connection.videoMaxFrameDuration),
+        audioChannels: connection.audioChannels.map(avcAudioChannelInfoPayload)
     )
 }
 
@@ -63,6 +93,66 @@ public func av_capture_connection_info_json(
         outErrorMessage?.pointee = ffiString(error.localizedDescription)
         return nil
     }
+}
+
+@_cdecl("av_capture_connection_audio_channels_count")
+public func av_capture_connection_audio_channels_count(_ connectionPtr: UnsafeMutableRawPointer) -> Int {
+    avcConnectionBox(connectionPtr).connection.audioChannels.count
+}
+
+@_cdecl("av_capture_connection_audio_channel_at_index")
+public func av_capture_connection_audio_channel_at_index(
+    _ connectionPtr: UnsafeMutableRawPointer,
+    _ index: Int,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutableRawPointer? {
+    let connection = avcConnectionBox(connectionPtr).connection
+    guard index >= 0, index < connection.audioChannels.count else {
+        outErrorMessage?.pointee = ffiString("audio channel index out of range")
+        return nil
+    }
+    return avcRetain(AudioChannelBox(connection.audioChannels[index]))
+}
+
+@_cdecl("av_capture_audio_channel_release")
+public func av_capture_audio_channel_release(_ audioChannelPtr: UnsafeMutableRawPointer?) {
+    avcRelease(audioChannelPtr, as: AudioChannelBox.self)
+}
+
+@_cdecl("av_capture_audio_channel_info_json")
+public func av_capture_audio_channel_info_json(
+    _ audioChannelPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutablePointer<CChar>? {
+    let audioChannel = avcAudioChannelBox(audioChannelPtr).audioChannel
+    do {
+        return ffiString(try avcEncodeJSON(avcAudioChannelInfoPayload(from: audioChannel)))
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return nil
+    }
+}
+
+@_cdecl("av_capture_audio_channel_set_volume")
+public func av_capture_audio_channel_set_volume(
+    _ audioChannelPtr: UnsafeMutableRawPointer,
+    _ volume: Float,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    let audioChannel = avcAudioChannelBox(audioChannelPtr).audioChannel
+    audioChannel.volume = volume
+    return AVC_OK
+}
+
+@_cdecl("av_capture_audio_channel_set_enabled")
+public func av_capture_audio_channel_set_enabled(
+    _ audioChannelPtr: UnsafeMutableRawPointer,
+    _ enabled: Bool,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    let audioChannel = avcAudioChannelBox(audioChannelPtr).audioChannel
+    audioChannel.isEnabled = enabled
+    return AVC_OK
 }
 
 @_cdecl("av_capture_connection_set_enabled")
