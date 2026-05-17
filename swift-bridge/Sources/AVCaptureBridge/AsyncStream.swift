@@ -193,6 +193,13 @@ private final class VideoSampleStreamBridge: NSObject, AVCaptureVideoDataOutputS
 
     deinit {
         outputBox.videoOutput.setSampleBufferDelegate(nil, queue: nil)
+        // Drain any delegate callbacks that were already enqueued on `queue`
+        // before the delegate was cleared.  Without this barrier the Rust
+        // `SenderBox` (ctx pointer) could be freed by `_sender_box.drop()`
+        // while a queued `captureOutput` callback is still reading it, which
+        // would be a use-after-free.  `queue.sync {}` blocks this deinit until
+        // all pending items on the serial queue have finished.
+        queue.sync {}
     }
 
     func captureOutput(
@@ -228,6 +235,10 @@ private final class AudioSampleStreamBridge: NSObject, AVCaptureAudioDataOutputS
 
     deinit {
         outputBox.audioOutput.setSampleBufferDelegate(nil, queue: nil)
+        // Same rationale as VideoSampleStreamBridge: drain in-flight callbacks
+        // before this deinit returns so the Rust SenderBox (ctx) is never
+        // accessed after it has been freed.
+        queue.sync {}
     }
 
     func captureOutput(

@@ -214,19 +214,30 @@ unsafe extern "C" fn video_sample_trampoline(
     sample_buffer: *mut c_void,
     pixel_buffer: *mut c_void,
 ) {
+    // SAFETY: `userdata` is the `Box<VideoCallbackState>` cast to `*mut c_void`
+    // in `set_sample_buffer_handler`. It is non-null and properly aligned for
+    // the entire lifetime of this callback registration.
     let Some(state) = userdata.cast::<VideoCallbackState>().as_mut() else {
         return;
     };
+    // SAFETY: `sample_buffer` is a `CMSampleBufferRef` at +1 retain passed from
+    // the Swift bridge via `Unmanaged.passRetained(...).toOpaque()`.
     let Some(sample_buffer) = CMSampleBuffer::from_raw(sample_buffer) else {
         return;
     };
     let pixel_buffer = CVPixelBuffer::from_raw(pixel_buffer);
-    (state.callback)(sample_buffer, pixel_buffer);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("video_sample_trampoline", || {
+        (state.callback)(sample_buffer, pixel_buffer);
+    });
 }
 
 unsafe extern "C" fn video_callback_drop(userdata: *mut c_void) {
     if userdata.is_null() {
         return;
     }
+    // SAFETY: `userdata` was created by `Box::into_raw(Box::new(VideoCallbackState { .. }))`
+    // in `set_sample_buffer_handler` and is only freed here, exactly once.
     drop(Box::from_raw(userdata.cast::<VideoCallbackState>()));
 }

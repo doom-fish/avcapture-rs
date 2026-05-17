@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.1] - 2026-05-20
+
+### Fixed
+- **Swift deinit race (use-after-free prevention)**: `VideoSampleStreamBridge` and
+  `AudioSampleStreamBridge` now call `queue.sync {}` after
+  `setSampleBufferDelegate(nil, nil)` in `deinit`. This drains any capture-queue
+  callbacks that were enqueued before the delegate was cleared, ensuring the Rust
+  `SenderBox` (`ctx` pointer) is never accessed after it has been freed.
+- **Panic safety across FFI**: `video_sample_trampoline` and `audio_sample_trampoline`
+  now wrap user closure invocations in
+  `doom_fish_utils::panic_safe::catch_user_panic`. A panic in a user-supplied sample
+  buffer handler previously had undefined behaviour (unwind across `extern "C"`).
+- **SAFETY comments**: Added `// SAFETY:` documentation to all `unsafe` blocks and
+  `unsafe impl` declarations in `async_api.rs`, `video_data_output.rs`, and
+  `audio_data_output.rs`.
+- **`Clone` doc on sample-buffer events**: `VideoSampleBufferEvent` and
+  `AudioSampleBufferEvent` now document that `Clone` is a cheap `CFRetain`
+  (reference-count increment), not a copy of pixel/audio data.
+- **Cargo.toml**: Widened `doom-fish-utils` version range from `"0.1"` to
+  `">=0.1, <0.3"` per workspace version-range convention.
+
 ## [0.3.0] - 2026-05-17
 
 ### Added
