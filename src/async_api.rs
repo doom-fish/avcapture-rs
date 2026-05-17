@@ -273,11 +273,7 @@ unsafe extern "C" fn session_error_cb(kind: i32, payload: *mut c_char, ctx: *mut
     });
 }
 
-unsafe extern "C" fn session_interruption_cb(
-    kind: i32,
-    _payload: *mut c_char,
-    ctx: *mut c_void,
-) {
+unsafe extern "C" fn session_interruption_cb(kind: i32, _payload: *mut c_char, ctx: *mut c_void) {
     let Some(sender) = sender_from_ctx::<InterruptionEvent>(ctx) else {
         return;
     };
@@ -374,7 +370,10 @@ impl SessionRunningStream {
                 ctx,
             )
         };
-        assert!(!handle_ptr.is_null(), "session running stream subscribe failed");
+        assert!(
+            !handle_ptr.is_null(),
+            "session running stream subscribe failed"
+        );
         Self {
             _handle: StreamHandle::new(handle_ptr, unsubscribe_session_running),
             _sender_box: sender_box,
@@ -401,7 +400,10 @@ impl SessionErrorStream {
                 ctx,
             )
         };
-        assert!(!handle_ptr.is_null(), "session error stream subscribe failed");
+        assert!(
+            !handle_ptr.is_null(),
+            "session error stream subscribe failed"
+        );
         Self {
             _handle: StreamHandle::new(handle_ptr, unsubscribe_session_error),
             _sender_box: sender_box,
@@ -461,7 +463,10 @@ impl VideoSampleBufferStream {
                 ctx,
             )
         };
-        assert!(!handle_ptr.is_null(), "video sample stream subscribe failed");
+        assert!(
+            !handle_ptr.is_null(),
+            "video sample stream subscribe failed"
+        );
         Self {
             _handle: StreamHandle::new(handle_ptr, unsubscribe_video_sample),
             _sender_box: sender_box,
@@ -491,7 +496,10 @@ impl AudioSampleBufferStream {
                 ctx,
             )
         };
-        assert!(!handle_ptr.is_null(), "audio sample stream subscribe failed");
+        assert!(
+            !handle_ptr.is_null(),
+            "audio sample stream subscribe failed"
+        );
         Self {
             _handle: StreamHandle::new(handle_ptr, unsubscribe_audio_sample),
             _sender_box: sender_box,

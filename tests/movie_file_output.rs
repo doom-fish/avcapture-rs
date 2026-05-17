@@ -192,7 +192,10 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
     let cleared_boundary_info_json = unsafe {
         ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &mut err)
     };
-    assert!(err.is_null(), "unexpected cleared boundary info error: {err:?}");
+    assert!(
+        err.is_null(),
+        "unexpected cleared boundary info error: {err:?}"
+    );
     let cleared_boundary_info: RawAudioFileOutputInfo =
         unsafe { decode_json(cleared_boundary_info_json) };
     assert!(!cleared_boundary_info.sample_buffer_boundary_callback_installed);

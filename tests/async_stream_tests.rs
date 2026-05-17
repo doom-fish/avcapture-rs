@@ -111,7 +111,9 @@ mod async_stream {
     #[test]
     fn file_recording_stream_requires_attached_output() -> Result<(), Box<dyn std::error::Error>> {
         let output = avcapture::MovieFileOutput::new()?;
-        let artifact_dir = std::env::current_dir()?.join("target").join("test-artifacts");
+        let artifact_dir = std::env::current_dir()?
+            .join("target")
+            .join("test-artifacts");
         fs::create_dir_all(&artifact_dir)?;
         let artifact_path = artifact_dir.join("async-file-recording-stream.mov");
         let Err(err) = FileRecordingStream::start(&output, &artifact_path, 8) else {
@@ -119,7 +121,8 @@ mod async_stream {
         };
         assert!(matches!(
             err,
-            avcapture::AVCaptureError::OutputError(_) | avcapture::AVCaptureError::OperationFailed(_)
+            avcapture::AVCaptureError::OutputError(_)
+                | avcapture::AVCaptureError::OperationFailed(_)
         ));
         Ok(())
     }
