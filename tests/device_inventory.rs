@@ -54,12 +54,10 @@ fn device_inventory_surface_smoke() -> common::TestResult {
         .map(u64::from);
     let _ = details.preferred_microphone_mode.map(i32::from);
     let _ = details.active_microphone_mode.map(i32::from);
-    let _ = details.available_reaction_types.clone();
-    let _ = details.reaction_effects_in_progress.clone();
+    let _ = &details.available_reaction_types;
+    let _ = &details.reaction_effects_in_progress;
     let _ = details.camera_lens_smudge_detection_status.map(i32::from);
-    let _ = details
-        .cinematic_video_capture_scene_monitoring_statuses
-        .clone();
+    let _ = &details.cinematic_video_capture_scene_monitoring_statuses;
 
     let _ = device.input_source_infos()?;
     let input_sources = device.input_sources()?;

@@ -27,6 +27,7 @@ struct RawAudioSettings {
     is_non_interleaved: bool,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawAudioFileOutputInfo {
@@ -55,6 +56,7 @@ unsafe fn take_error(err_ptr: *mut c_char) -> String {
     error
 }
 
+#[allow(clippy::missing_const_for_fn)]
 unsafe extern "C" fn sample_buffer_boundary_callback(
     _userdata: *mut c_void,
     _sample_buffer: *mut c_void,
@@ -108,11 +110,12 @@ fn movie_file_output_smoke() -> common::TestResult {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn audio_file_output_ffi_smoke() -> common::TestResult {
     let mut err: *mut c_char = ptr::null_mut();
     let output_ptr =
         unsafe { ffi::movie_file_output::av_capture_audio_file_output_create(&mut err) };
-    assert!(err.is_null(), "unexpected create error: {:?}", err);
+    assert!(err.is_null(), "unexpected create error: {err:?}");
     assert!(!output_ptr.is_null());
 
     let settings_json = serde_json::to_string(&AudioOutputSettings::pcm_i16(48_000.0, 2))?;
@@ -134,7 +137,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
     let info_json = unsafe {
         ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &mut err)
     };
-    assert!(err.is_null(), "unexpected info error: {:?}", err);
+    assert!(err.is_null(), "unexpected info error: {err:?}");
     let info: RawAudioFileOutputInfo = unsafe { decode_json(info_json) };
     assert_eq!(info.connection_count, 0);
     assert!(!info.is_recording);
@@ -153,7 +156,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
 
     let output_info_json =
         unsafe { ffi::output::av_capture_output_info_json(output_ptr, &mut err) };
-    assert!(err.is_null(), "unexpected generic info error: {:?}", err);
+    assert!(err.is_null(), "unexpected generic info error: {err:?}");
     let output_info: RawCaptureOutputInfo = unsafe { decode_json(output_info_json) };
     assert_eq!(output_info.connection_count, info.connection_count);
     if output_info.deferred_start_enabled == Some(true) {
@@ -178,22 +181,18 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
     let boundary_info_json = unsafe {
         ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &mut err)
     };
-    assert!(err.is_null(), "unexpected boundary info error: {:?}", err);
+    assert!(err.is_null(), "unexpected boundary info error: {err:?}");
     let boundary_info: RawAudioFileOutputInfo = unsafe { decode_json(boundary_info_json) };
     assert!(boundary_info.sample_buffer_boundary_callback_installed);
     unsafe {
         ffi::movie_file_output::av_capture_audio_file_output_clear_sample_buffer_boundary_callback(
             output_ptr,
-        )
-    };
+        );
+    }
     let cleared_boundary_info_json = unsafe {
         ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &mut err)
     };
-    assert!(
-        err.is_null(),
-        "unexpected cleared boundary info error: {:?}",
-        err
-    );
+    assert!(err.is_null(), "unexpected cleared boundary info error: {err:?}");
     let cleared_boundary_info: RawAudioFileOutputInfo =
         unsafe { decode_json(cleared_boundary_info_json) };
     assert!(!cleared_boundary_info.sample_buffer_boundary_callback_installed);
@@ -224,7 +223,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
     );
 
     unsafe {
-        ffi::movie_file_output::av_capture_audio_file_output_release(output_ptr.cast::<c_void>())
-    };
+        ffi::movie_file_output::av_capture_audio_file_output_release(output_ptr.cast::<c_void>());
+    }
     Ok(())
 }

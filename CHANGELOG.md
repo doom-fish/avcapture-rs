@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0] - 2026-05-17
+
+### Added
+- `async` feature gate with `src/async_api.rs` module
+- `SessionRunningStream` — KVO `AVCaptureSession.isRunning` as async stream
+- `SessionErrorStream` — `runtimeErrorNotification` as async stream
+- `SessionInterruptionStream` — `wasInterruptedNotification` / `interruptionEndedNotification` as async stream
+- `VideoSampleBufferStream` — `AVCaptureVideoDataOutputSampleBufferDelegate` as async stream
+- `AudioSampleBufferStream` — `AVCaptureAudioDataOutputSampleBufferDelegate` as async stream
+- `FileRecordingStream` — `AVCaptureFileOutputRecordingDelegate` lifecycle as async stream
+- `MetadataObjectsStream` — `AVCaptureMetadataOutputObjectsDelegate` as async stream
+- `doom-fish-utils` dependency (executor-agnostic `BoundedAsyncStream<T>`)
+- Example `14_async_session_streams`
+
 ## 0.2.2
 
 - Closed the remaining macOS audit gaps across `AVCapturePhoto*`, `AVCaptureAudioPreviewOutput`, `AVCaptureAudioFileOutput`, `AVCaptureAudioChannel`, session controls, Desk View / external-display, and `AVCaptureTimecode*`.

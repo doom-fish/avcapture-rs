@@ -3,6 +3,7 @@ mod common;
 use avcapture::prelude::*;
 
 #[test]
+#[allow(clippy::float_cmp, clippy::too_many_lines)]
 fn session_controls_surface_smoke() -> common::TestResult {
     let session = CaptureSession::new()?;
 

@@ -47,11 +47,11 @@ fn data_outputs_smoke() -> common::TestResult {
         video_output
             .last_dropped_sample_reason()?
             .as_ref()
-            .map(|reason| reason.as_raw()),
+            .map(AVCaptureOutputDataDroppedReason::as_raw),
         video_info
             .last_dropped_sample_reason
             .as_ref()
-            .map(|reason| reason.as_raw())
+            .map(AVCaptureOutputDataDroppedReason::as_raw)
     );
     assert_eq!(video_info.dropped_sample_count, 0);
     assert!(video_info.last_dropped_sample_reason.is_none());
@@ -118,7 +118,7 @@ fn dropped_reason_wrapper_deserializes_known_and_unknown_values() {
         audio_info
             .last_dropped_sample_reason
             .as_ref()
-            .map(|reason| reason.as_raw()),
+            .map(AVCaptureOutputDataDroppedReason::as_raw),
         Some("lateData")
     );
 
@@ -150,13 +150,13 @@ fn audio_preview_output_ffi_smoke() {
     let mut err: *mut c_char = ptr::null_mut();
     let output_ptr =
         unsafe { ffi::audio_data_output::av_capture_audio_preview_output_create(&mut err) };
-    assert!(err.is_null(), "unexpected create error: {:?}", err);
+    assert!(err.is_null(), "unexpected create error: {err:?}");
     assert!(!output_ptr.is_null());
 
     let info_json = unsafe {
         ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &mut err)
     };
-    assert!(err.is_null(), "unexpected info error: {:?}", err);
+    assert!(err.is_null(), "unexpected info error: {err:?}");
     let info: RawAudioPreviewOutputInfo = unsafe { decode_json(info_json) };
     assert_eq!(info.connection_count, 0);
     assert!(info.output_device_unique_id.is_none());
@@ -168,13 +168,13 @@ fn audio_preview_output_ffi_smoke() {
         ffi::audio_data_output::av_capture_audio_preview_output_set_output_device_unique_id(
             output_ptr,
             unique_id.as_ptr(),
-        )
-    };
+        );
+    }
 
     let updated_json = unsafe {
         ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &mut err)
     };
-    assert!(err.is_null(), "unexpected updated info error: {:?}", err);
+    assert!(err.is_null(), "unexpected updated info error: {err:?}");
     let updated: RawAudioPreviewOutputInfo = unsafe { decode_json(updated_json) };
     assert!(
         updated.output_device_unique_id.is_none()
@@ -184,7 +184,7 @@ fn audio_preview_output_ffi_smoke() {
 
     let output_info_json =
         unsafe { ffi::output::av_capture_output_info_json(output_ptr, &mut err) };
-    assert!(err.is_null(), "unexpected generic info error: {:?}", err);
+    assert!(err.is_null(), "unexpected generic info error: {err:?}");
     let output_info: RawCaptureOutputInfo = unsafe { decode_json(output_info_json) };
     assert_eq!(output_info.connection_count, updated.connection_count);
     if output_info.deferred_start_enabled == Some(true) {
@@ -200,7 +200,7 @@ fn audio_preview_output_ffi_smoke() {
     let cleared_json = unsafe {
         ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &mut err)
     };
-    assert!(err.is_null(), "unexpected cleared info error: {:?}", err);
+    assert!(err.is_null(), "unexpected cleared info error: {err:?}");
     let cleared: RawAudioPreviewOutputInfo = unsafe { decode_json(cleared_json) };
     assert!(cleared.output_device_unique_id.is_none());
 

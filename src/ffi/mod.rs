@@ -14,6 +14,7 @@ pub type AudioSampleCallback =
 pub type JsonCallback = unsafe extern "C" fn(userdata: *mut c_void, payload: *mut c_char);
 pub type DropCallback = unsafe extern "C" fn(userdata: *mut c_void);
 
+pub mod async_stream;
 pub mod audio_data_output;
 pub mod connection;
 pub mod core;

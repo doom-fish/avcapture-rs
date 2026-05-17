@@ -31,7 +31,7 @@ fn main() -> support::ExampleResult {
         video_output
             .last_dropped_sample_reason()?
             .as_ref()
-            .map(|reason| reason.as_raw())
+            .map(AVCaptureOutputDataDroppedReason::as_raw)
     );
     println!(
         "audio output generic info: {:?}",
@@ -49,7 +49,7 @@ fn main() -> support::ExampleResult {
         audio_output
             .last_dropped_sample_reason()?
             .as_ref()
-            .map(|reason| reason.as_raw())
+            .map(AVCaptureOutputDataDroppedReason::as_raw)
     );
 
     video_output.clear_sample_buffer_handler();

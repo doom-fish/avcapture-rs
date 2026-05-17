@@ -2,6 +2,7 @@ mod support;
 
 use avcapture::prelude::*;
 
+#[allow(clippy::too_many_lines)]
 fn main() -> support::ExampleResult {
     println!(
         "video authorization: {:?}",

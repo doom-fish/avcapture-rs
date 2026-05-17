@@ -17,8 +17,9 @@ fn photo_output_smoke() -> common::TestResult {
     assert_eq!(
         output
             .capture_readiness()?
-            .map(|readiness| readiness.as_raw()),
-        info.capture_readiness.map(|readiness| readiness.as_raw())
+            .map(PhotoOutputCaptureReadiness::as_raw),
+        info.capture_readiness
+            .map(PhotoOutputCaptureReadiness::as_raw)
     );
     assert!(!output.callback_installed()?);
 

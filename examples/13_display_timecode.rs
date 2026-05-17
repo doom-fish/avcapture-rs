@@ -3,7 +3,7 @@ mod support;
 use apple_cf::cm::CMTime;
 use avcapture::prelude::*;
 
-fn frame_duration_30fps() -> CMTime {
+const fn frame_duration_30fps() -> CMTime {
     CMTime {
         value: 1,
         timescale: 30,
@@ -34,7 +34,7 @@ fn main() -> support::ExampleResult {
 
     match VideoPreviewLayer::external_display_support_info() {
         Ok(support_info) => {
-            println!("external display support: {:?}", support_info);
+            println!("external display support: {support_info:?}");
             let configuration = VideoPreviewLayer::external_display_configuration()?;
             configuration
                 .set_should_match_frame_rate(support_info.should_match_frame_rate_supported);
@@ -93,8 +93,8 @@ fn main() -> support::ExampleResult {
             );
             let initial_timecode = generator.generate_initial_timecode()?;
             let advanced_timecode = initial_timecode.advanced_by_frames(90)?;
-            println!("initial timecode: {:?}", initial_timecode);
-            println!("advanced timecode: {:?}", advanced_timecode);
+            println!("initial timecode: {initial_timecode:?}");
+            println!("advanced timecode: {advanced_timecode:?}");
 
             let stamped_buffer = advanced_timecode
                 .create_metadata_sample_buffer_associated_with_presentation_time_stamp(CMTime {

@@ -36,7 +36,7 @@ fn main() -> support::ExampleResult {
 
     if session.supports_controls()? {
         session.set_controls_delegate_handler(None, |event| {
-            println!("session controls event: {:?}", event);
+            println!("session controls event: {event:?}");
         })?;
 
         if session.can_add_control(&slider)? {
@@ -60,7 +60,7 @@ fn main() -> support::ExampleResult {
 
     if session.deferred_start_supported()? {
         session.set_deferred_start_delegate_handler(None, |event| {
-            println!("deferred start event: {:?}", event);
+            println!("deferred start event: {event:?}");
         })?;
         println!(
             "automatically runs deferred start: {:?}",

@@ -2,13 +2,14 @@
 
 Safe Rust bindings for Apple's `AVCapture` stack on macOS.
 
-## 0.2.2 highlights
+## 0.3.0 highlights
 
+- Added the `async` feature with executor-agnostic `BoundedAsyncStream<T>` wrappers for session state, sample buffers, file-recording lifecycle, and metadata objects.
 - `AVCaptureDevice` now covers focus / white-balance / autofocus / color-space state, torch-level constants, input sources, rotation coordinators, Center Stage / microphone modes, reactions, and related notification constants.
 - Added `AVCaptureAudioPreviewOutput`, `AVCaptureAudioFileOutput`, `AVCaptureAudioChannel`, typed dropped-sample reasons, and base file-output sample-buffer-boundary callbacks.
 - Added `AVCapturePhotoOutputReadinessCoordinator`, `ResolvedPhotoSettings`, session controls / deferred-start delegates, Desk View / external-display helpers, and the `AVCaptureTimecode*` family.
 - `AVCaptureVideoPreviewLayer` now includes geometry conversion plus Desk View / external-display entry points.
-- Headless-safe numbered examples and per-area tests now cover examples `01` through `13`.
+- Headless-safe numbered examples and per-area tests now cover examples `01` through `14`.
 
 See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
 
@@ -17,6 +18,16 @@ See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
 ```bash
 cargo add avcapture
 ```
+
+Enable executor-agnostic async streams with:
+
+```bash
+cargo add avcapture --features async
+```
+
+## Async streams
+
+The `async` feature adds `avcapture::async_api`, which exposes `BoundedAsyncStream<T>` wrappers for session running/error/interruption state, video/audio sample buffers, movie file recording lifecycle events, and metadata-object delivery.
 
 ## Example
 
@@ -59,6 +70,7 @@ These examples intentionally avoid `startRunning`, and only invoke photo/movie c
 - `cargo run --example 11_video_preview_layer`
 - `cargo run --example 12_session_controls`
 - `cargo run --example 13_display_timecode`
+- `cargo run --example 14_async_session_streams --features async`
 
 ## Notes
 
