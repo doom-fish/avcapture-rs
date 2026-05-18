@@ -4,6 +4,8 @@
 
 use ::core::ffi::{c_char, c_void};
 
+pub use doom_fish_utils::ffi_callbacks::DropCallback;
+
 pub type VideoSampleCallback = unsafe extern "C" fn(
     userdata: *mut c_void,
     sample_buffer: *mut c_void,
@@ -12,7 +14,6 @@ pub type VideoSampleCallback = unsafe extern "C" fn(
 pub type AudioSampleCallback =
     unsafe extern "C" fn(userdata: *mut c_void, sample_buffer: *mut c_void);
 pub type JsonCallback = unsafe extern "C" fn(userdata: *mut c_void, payload: *mut c_char);
-pub type DropCallback = unsafe extern "C" fn(userdata: *mut c_void);
 
 pub mod async_stream;
 pub mod audio_data_output;

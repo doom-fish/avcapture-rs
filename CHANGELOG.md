@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1] - 2026-05-18
+
+### Changed
+- Re-exported `DropCallback` from `doom-fish-utils::ffi_callbacks` and removed the duplicate local FFI typedef.
+
 ## [0.4.0] - 2026-05-20
 
 ### Changed

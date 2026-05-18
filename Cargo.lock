@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "avcapture"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "apple-cf",
  "doom-fish-utils",
@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "doom-fish-utils"
-version = "0.1.1"
+version = "0.2.0"
 
 [[package]]
 name = "itoa"
