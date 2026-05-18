@@ -69,6 +69,7 @@ pub struct DeviceInputInfo {
 }
 
 /// Safe wrapper around `AVCaptureDeviceInput`.
+#[derive(Debug)]
 pub struct DeviceInput {
     pub(crate) ptr: *mut c_void,
 }

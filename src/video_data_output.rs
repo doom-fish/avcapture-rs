@@ -71,6 +71,7 @@ struct VideoCallbackState {
 }
 
 /// Safe wrapper around `AVCaptureVideoDataOutput`.
+#[derive(Debug)]
 pub struct VideoDataOutput {
     pub(crate) ptr: *mut c_void,
 }

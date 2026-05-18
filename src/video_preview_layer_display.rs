@@ -60,6 +60,7 @@ struct DeskViewCompletionState {
     callback: Box<dyn FnMut(Result<(), AVCaptureError>) + Send + 'static>,
 }
 
+#[derive(Debug)]
 pub struct DeskViewApplication {
     ptr: *mut c_void,
 }
@@ -194,6 +195,7 @@ impl DeskViewApplication {
     }
 }
 
+#[derive(Debug)]
 pub struct DeskViewApplicationLaunchConfiguration {
     ptr: *mut c_void,
 }
@@ -271,6 +273,7 @@ impl DeskViewApplicationLaunchConfiguration {
     }
 }
 
+#[derive(Debug)]
 pub struct ExternalDisplayConfiguration {
     ptr: *mut c_void,
 }
@@ -364,6 +367,7 @@ impl ExternalDisplayConfiguration {
     }
 }
 
+#[derive(Debug)]
 pub struct ExternalDisplayConfigurator {
     ptr: *mut c_void,
 }

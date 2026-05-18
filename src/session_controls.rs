@@ -86,6 +86,7 @@ struct DeferredStartDelegateCallbackState {
     callback: Box<dyn FnMut(CaptureSessionDeferredStartEvent) + Send + 'static>,
 }
 
+#[derive(Debug)]
 pub struct CaptureControl {
     pub(crate) ptr: *mut c_void,
 }
@@ -162,6 +163,7 @@ impl CaptureControl {
     }
 }
 
+#[derive(Debug)]
 pub struct CaptureIndexPicker {
     control: CaptureControl,
 }
@@ -343,6 +345,7 @@ impl CaptureIndexPicker {
     }
 }
 
+#[derive(Debug)]
 pub struct CaptureSlider {
     control: CaptureControl,
 }
@@ -570,6 +573,7 @@ impl CaptureSlider {
     }
 }
 
+#[derive(Debug)]
 pub struct CaptureSystemExposureBiasSlider {
     control: CaptureControl,
 }
@@ -645,6 +649,7 @@ impl CaptureSystemExposureBiasSlider {
     }
 }
 
+#[derive(Debug)]
 pub struct CaptureSystemZoomSlider {
     control: CaptureControl,
 }

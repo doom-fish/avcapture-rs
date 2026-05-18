@@ -293,6 +293,7 @@ impl TimecodeMetadataSampleBuffer {
     }
 }
 
+#[derive(Debug)]
 pub struct CaptureTimecodeSource {
     ptr: *mut c_void,
 }
@@ -338,6 +339,7 @@ impl CaptureTimecodeSource {
     }
 }
 
+#[derive(Debug)]
 pub struct CaptureTimecodeGenerator {
     ptr: *mut c_void,
 }

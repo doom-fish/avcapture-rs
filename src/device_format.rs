@@ -42,6 +42,7 @@ pub struct CaptureDeviceFormatInfo {
 }
 
 /// Safe wrapper around `AVCaptureDeviceFormat`.
+#[derive(Debug)]
 pub struct CaptureDeviceFormat {
     pub(crate) ptr: *mut c_void,
 }

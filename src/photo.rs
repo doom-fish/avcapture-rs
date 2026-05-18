@@ -88,6 +88,7 @@ pub struct PhotoInfo {
 }
 
 /// Safe wrapper around `AVCapturePhotoSettings`.
+#[derive(Debug)]
 pub struct PhotoSettings {
     pub(crate) ptr: *mut c_void,
 }

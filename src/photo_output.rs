@@ -117,6 +117,7 @@ struct PhotoOutputReadinessCallbackState {
 }
 
 /// Safe wrapper around `AVCapturePhotoOutput`.
+#[derive(Debug)]
 pub struct PhotoOutput {
     pub(crate) ptr: *mut c_void,
 }

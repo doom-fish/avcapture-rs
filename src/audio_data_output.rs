@@ -86,11 +86,13 @@ struct AudioCallbackState {
 }
 
 /// Safe wrapper around `AVCaptureAudioDataOutput`.
+#[derive(Debug)]
 pub struct AudioDataOutput {
     pub(crate) ptr: *mut c_void,
 }
 
 /// Safe wrapper around `AVCaptureAudioPreviewOutput`.
+#[derive(Debug)]
 pub struct AudioPreviewOutput {
     pub(crate) ptr: *mut c_void,
 }

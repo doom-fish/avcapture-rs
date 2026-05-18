@@ -40,6 +40,7 @@ struct MetadataCallbackState {
 }
 
 /// Safe wrapper around `AVCaptureMetadataOutput`.
+#[derive(Debug)]
 pub struct MetadataOutput {
     pub(crate) ptr: *mut c_void,
 }

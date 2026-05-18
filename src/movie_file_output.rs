@@ -107,11 +107,13 @@ struct FileOutputSampleBufferCallbackState {
 }
 
 /// Safe wrapper around `AVCaptureMovieFileOutput`.
+#[derive(Debug)]
 pub struct MovieFileOutput {
     pub(crate) ptr: *mut c_void,
 }
 
 /// Safe wrapper around `AVCaptureAudioFileOutput`.
+#[derive(Debug)]
 pub struct AudioFileOutput {
     pub(crate) ptr: *mut c_void,
 }

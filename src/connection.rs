@@ -43,6 +43,7 @@ pub struct CaptureConnectionInfo {
 }
 
 /// Safe wrapper around `AVCaptureAudioChannel`.
+#[derive(Debug)]
 pub struct CaptureAudioChannel {
     ptr: *mut c_void,
 }
@@ -116,6 +117,7 @@ impl Drop for CaptureAudioChannel {
 }
 
 /// Safe wrapper around `AVCaptureConnection`.
+#[derive(Debug)]
 pub struct CaptureConnection {
     ptr: *mut c_void,
 }

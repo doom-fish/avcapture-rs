@@ -128,6 +128,7 @@ impl From<CaptureSessionPreset> for String {
 }
 
 /// Safe wrapper around `AVCaptureSession`.
+#[derive(Debug)]
 pub struct CaptureSession {
     pub(crate) ptr: *mut c_void,
 }

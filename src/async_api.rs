@@ -121,6 +121,7 @@ impl From<MetadataObjectPayload> for MetadataObject {
     }
 }
 
+#[derive(Debug)]
 struct StreamHandle {
     ptr: *mut c_void,
     drop_fn: unsafe fn(*mut c_void),
@@ -154,6 +155,7 @@ impl Drop for StreamHandle {
 unsafe impl Send for StreamHandle {}
 unsafe impl Sync for StreamHandle {}
 
+#[derive(Debug)]
 struct SenderBox<T>(*mut AsyncStreamSender<T>);
 
 impl<T> SenderBox<T> {
@@ -431,6 +433,7 @@ unsafe extern "C" fn metadata_objects_cb(kind: i32, payload: *mut c_char, ctx: *
     });
 }
 
+#[derive(Debug)]
 pub struct SessionRunningStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<SessionRunningEvent>,
@@ -461,6 +464,7 @@ impl SessionRunningStream {
 
 impl_stream_common!(SessionRunningStream, SessionRunningEvent);
 
+#[derive(Debug)]
 pub struct SessionErrorStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<SessionErrorEvent>,
@@ -491,6 +495,7 @@ impl SessionErrorStream {
 
 impl_stream_common!(SessionErrorStream, SessionErrorEvent);
 
+#[derive(Debug)]
 pub struct SessionInterruptionStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<InterruptionEvent>,
@@ -521,6 +526,7 @@ impl SessionInterruptionStream {
 
 impl_stream_common!(SessionInterruptionStream, InterruptionEvent);
 
+#[derive(Debug)]
 pub struct VideoSampleBufferStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<VideoSampleBufferEvent>,
@@ -554,6 +560,7 @@ impl VideoSampleBufferStream {
 
 impl_stream_common!(VideoSampleBufferStream, VideoSampleBufferEvent);
 
+#[derive(Debug)]
 pub struct AudioSampleBufferStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<AudioSampleBufferEvent>,
@@ -587,6 +594,7 @@ impl AudioSampleBufferStream {
 
 impl_stream_common!(AudioSampleBufferStream, AudioSampleBufferEvent);
 
+#[derive(Debug)]
 pub struct FileRecordingStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<FileRecordingStreamEvent>,
@@ -624,6 +632,7 @@ impl FileRecordingStream {
 
 impl_stream_common!(FileRecordingStream, FileRecordingStreamEvent);
 
+#[derive(Debug)]
 pub struct MetadataObjectsStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<MetadataObjectsStreamEvent>,

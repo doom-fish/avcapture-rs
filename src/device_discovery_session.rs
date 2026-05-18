@@ -19,6 +19,7 @@ struct DiscoveryCriteria {
 }
 
 /// Safe wrapper around `AVCaptureDeviceDiscoverySession`.
+#[derive(Debug)]
 pub struct CaptureDeviceDiscoverySession {
     ptr: *mut c_void,
 }

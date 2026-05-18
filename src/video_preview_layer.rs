@@ -47,6 +47,7 @@ impl CapturePointPayload {
 }
 
 /// Safe wrapper around `AVCaptureVideoPreviewLayer`.
+#[derive(Debug)]
 pub struct VideoPreviewLayer {
     ptr: *mut c_void,
 }

@@ -25,6 +25,7 @@ pub struct ScreenInputInfo {
 }
 
 /// Safe wrapper around `AVCaptureScreenInput`.
+#[derive(Debug)]
 pub struct ScreenInput {
     pub(crate) ptr: *mut c_void,
 }

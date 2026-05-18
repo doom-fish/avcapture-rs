@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.2] - 2026-05-18
+
+### Changed
+- Derived `Debug` for every public wrapper and async stream struct in the crate that can support it.
+
 ## [0.4.1] - 2026-05-18
 
 ### Changed

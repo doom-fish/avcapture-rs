@@ -608,6 +608,7 @@ pub struct CaptureDeviceDetails {
 }
 
 /// Safe wrapper around `AVCaptureDevice`.
+#[derive(Debug)]
 pub struct CaptureDevice {
     pub(crate) ptr: *mut c_void,
 }
@@ -622,6 +623,7 @@ impl Drop for CaptureDevice {
 }
 
 /// Safe wrapper around `AVCaptureDeviceInputSource`.
+#[derive(Debug)]
 pub struct CaptureDeviceInputSource {
     ptr: *mut c_void,
 }
@@ -660,6 +662,7 @@ impl CaptureDeviceInputSource {
 }
 
 /// Safe wrapper around `AVCaptureDeviceRotationCoordinator`.
+#[derive(Debug)]
 pub struct CaptureDeviceRotationCoordinator {
     ptr: *mut c_void,
 }
@@ -1206,6 +1209,7 @@ impl CaptureDevice {
     }
 }
 
+#[derive(Debug)]
 pub struct CaptureDeviceConfigurationLock<'a> {
     device: &'a CaptureDevice,
 }
