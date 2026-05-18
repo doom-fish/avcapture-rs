@@ -3,6 +3,7 @@
 
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
+/// Async stream adapters for `AVCapture*` notifications and delegate callbacks.
 pub mod async_api;
 mod audio_data_output;
 mod connection;
@@ -12,6 +13,7 @@ mod device_format;
 mod device_input;
 mod device_position;
 mod error;
+/// Raw FFI declarations backing the safe `AVCapture*` wrappers.
 pub mod ffi;
 mod helpers;
 mod input;

@@ -7,6 +7,7 @@ use crate::ffi;
 /// Top-level error type returned by fallible APIs in this crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
+/// `AVCapture` values.
 pub enum AVCaptureError {
     /// Invalid caller input (UTF-8 / NUL / unsupported configuration).
     InvalidArgument(String),
@@ -40,6 +41,11 @@ impl fmt::Display for AVCaptureError {
 
 impl std::error::Error for AVCaptureError {}
 
+/// Corresponds to `AVCapture.from_swift`.
+///
+/// # Safety
+///
+/// The caller must ensure the raw inputs satisfy the bridge invariants expected by the underlying API.
 pub unsafe fn from_swift(status: i32, error_str: *mut core::ffi::c_char) -> AVCaptureError {
     let message = if error_str.is_null() {
         String::new()

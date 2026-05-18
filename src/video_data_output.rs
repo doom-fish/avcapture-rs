@@ -25,14 +25,19 @@ use crate::output::{AVCaptureOutputDataDroppedReason, CaptureOutputRef};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Wraps `AVCaptureVideoDataOutput`.
 pub struct VideoOutputSettings {
+    /// The pixel format reported by `AVCaptureVideoDataOutput`.
     pub pixel_format: u32,
+    /// The width component.
     pub width: Option<i32>,
+    /// The height component.
     pub height: Option<i32>,
 }
 
 impl VideoOutputSettings {
     #[must_use]
+    /// Creates a new `AVCaptureVideoDataOutput` wrapper.
     pub const fn new(pixel_format: u32) -> Self {
         Self {
             pixel_format,
@@ -42,11 +47,13 @@ impl VideoOutputSettings {
     }
 
     #[must_use]
+    /// Returns video settings configured for BGRA pixels.
     pub const fn bgra() -> Self {
         Self::new(u32::from_be_bytes(*b"BGRA"))
     }
 
     #[must_use]
+    /// Returns a copy with explicit dimensions set.
     pub const fn with_dimensions(mut self, width: i32, height: i32) -> Self {
         self.width = Some(width);
         self.height = Some(height);
@@ -56,13 +63,21 @@ impl VideoOutputSettings {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Snapshot of `AVCaptureVideoDataOutput` state.
 pub struct VideoDataOutputInfo {
+    /// The connection count reported by `AVCaptureVideoDataOutput`.
     pub connection_count: usize,
+    /// The always discards late video frames reported by `AVCaptureVideoDataOutput`.
     pub always_discards_late_video_frames: bool,
+    /// The available video cv pixel format types reported by `AVCaptureVideoDataOutput`.
     pub available_video_cv_pixel_format_types: Vec<u32>,
+    /// The callback installed reported by `AVCaptureVideoDataOutput`.
     pub callback_installed: bool,
+    /// The video settings reported by `AVCaptureVideoDataOutput`.
     pub video_settings: Option<VideoOutputSettings>,
+    /// The dropped sample count reported by `AVCaptureVideoDataOutput`.
     pub dropped_sample_count: usize,
+    /// The last dropped sample reason reported by `AVCaptureVideoDataOutput`.
     pub last_dropped_sample_reason: Option<AVCaptureOutputDataDroppedReason>,
 }
 
@@ -72,6 +87,7 @@ struct VideoCallbackState {
 
 /// Safe wrapper around `AVCaptureVideoDataOutput`.
 #[derive(Debug)]
+/// Wraps `AVCaptureVideoDataOutput`.
 pub struct VideoDataOutput {
     pub(crate) ptr: *mut c_void,
 }
@@ -92,6 +108,7 @@ impl CaptureOutputRef for VideoDataOutput {
 }
 
 impl VideoDataOutput {
+    /// Creates a new `AVCaptureVideoDataOutput` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe { ffi::video_data_output::av_capture_video_output_create(&mut err) };
@@ -101,6 +118,7 @@ impl VideoDataOutput {
         Ok(Self { ptr })
     }
 
+    /// Returns a snapshot of `AVCaptureVideoDataOutput` state.
     pub fn info(&self) -> Result<VideoDataOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
@@ -112,36 +130,44 @@ impl VideoDataOutput {
         parse_json_and_free(json_ptr)
     }
 
+    /// Returns the connection count reported by `AVCaptureVideoDataOutput`.
     pub fn connection_count(&self) -> Result<usize, AVCaptureError> {
         Ok(self.info()?.connection_count)
     }
 
+    /// Returns the available video cv pixel format types reported by `AVCaptureVideoDataOutput`.
     pub fn available_video_cv_pixel_format_types(&self) -> Result<Vec<u32>, AVCaptureError> {
         Ok(self.info()?.available_video_cv_pixel_format_types)
     }
 
+    /// Corresponds to `AVCaptureVideoDataOutput.video_settings`.
     pub fn video_settings(&self) -> Result<Option<VideoOutputSettings>, AVCaptureError> {
         Ok(self.info()?.video_settings)
     }
 
+    /// Corresponds to `AVCaptureVideoDataOutput.always_discards_late_video_frames`.
     pub fn always_discards_late_video_frames(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.always_discards_late_video_frames)
     }
 
+    /// Corresponds to `AVCaptureVideoDataOutput.callback_installed`.
     pub fn callback_installed(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.callback_installed)
     }
 
+    /// Returns the dropped sample count reported by `AVCaptureVideoDataOutput`.
     pub fn dropped_sample_count(&self) -> Result<usize, AVCaptureError> {
         Ok(self.info()?.dropped_sample_count)
     }
 
+    /// Corresponds to `AVCaptureVideoDataOutput.last_dropped_sample_reason`.
     pub fn last_dropped_sample_reason(
         &self,
     ) -> Result<Option<AVCaptureOutputDataDroppedReason>, AVCaptureError> {
         Ok(self.info()?.last_dropped_sample_reason)
     }
 
+    /// Sets the video settings on `AVCaptureVideoDataOutput`.
     pub fn set_video_settings(
         &self,
         settings: Option<&VideoOutputSettings>,
@@ -161,6 +187,7 @@ impl VideoDataOutput {
         Ok(())
     }
 
+    /// Sets the always discards late video frames on `AVCaptureVideoDataOutput`.
     pub fn set_always_discards_late_video_frames(&self, enabled: bool) {
         unsafe {
             ffi::video_data_output::av_capture_video_output_set_always_discards_late_video_frames(
@@ -169,6 +196,7 @@ impl VideoDataOutput {
         }
     }
 
+    /// Sets the sample-buffer handler on `AVCaptureVideoDataOutput`.
     pub fn set_sample_buffer_handler<F>(
         &self,
         queue_label: Option<&str>,
@@ -203,6 +231,7 @@ impl VideoDataOutput {
         Ok(())
     }
 
+    /// Clears the sample buffer handler on `AVCaptureVideoDataOutput`.
     pub fn clear_sample_buffer_handler(&self) {
         unsafe {
             ffi::video_data_output::av_capture_video_output_clear_sample_buffer_callback(self.ptr);

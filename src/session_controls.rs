@@ -12,49 +12,75 @@ use crate::helpers::{cstring, json_cstring, parse_json_and_free};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Snapshot of `AVCaptureControl` state.
 pub struct CaptureControlInfo {
+    /// The callback kind reported by the underlying API.
     pub kind: String,
+    /// The enabled reported by `AVCaptureControl`.
     pub enabled: bool,
+    /// The localized title reported by `AVCaptureControl`.
     pub localized_title: Option<String>,
+    /// The symbol name reported by `AVCaptureControl`.
     pub symbol_name: Option<String>,
+    /// The accessibility identifier reported by `AVCaptureControl`.
     pub accessibility_identifier: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Snapshot of `AVCaptureSlider` state.
 pub struct CaptureSliderInfo {
     #[serde(flatten)]
+    /// The shared `AVCaptureControl` state.
     pub control: CaptureControlInfo,
+    /// The value reported by `AVCaptureSlider`.
     pub value: f32,
+    /// The min value reported by `AVCaptureSlider`.
     pub min_value: Option<f32>,
+    /// The max value reported by `AVCaptureSlider`.
     pub max_value: Option<f32>,
+    /// The step reported by `AVCaptureSlider`.
     pub step: Option<f32>,
+    /// The values reported by `AVCaptureSlider`.
     pub values: Vec<f32>,
+    /// The prominent values reported by `AVCaptureSlider`.
     pub prominent_values: Vec<f32>,
+    /// The localized value format reported by `AVCaptureSlider`.
     pub localized_value_format: Option<String>,
+    /// The has action handler reported by `AVCaptureSlider`.
     pub has_action_handler: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Snapshot of `AVCaptureIndexPicker` state.
 pub struct CaptureIndexPickerInfo {
     #[serde(flatten)]
+    /// The shared `AVCaptureControl` state.
     pub control: CaptureControlInfo,
+    /// The selected index reported by `AVCaptureIndexPicker`.
     pub selected_index: usize,
+    /// The number of indexes reported by `AVCaptureIndexPicker`.
     pub number_of_indexes: usize,
+    /// The localized index titles reported by `AVCaptureIndexPicker`.
     pub localized_index_titles: Vec<String>,
+    /// The has action handler reported by `AVCaptureIndexPicker`.
     pub has_action_handler: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Event payload derived from `AVCaptureSession` callbacks.
 pub struct CaptureSessionControlsEvent {
+    /// The callback kind reported by the underlying API.
     pub kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Event payload derived from `AVCaptureSession` callbacks.
 pub struct CaptureSessionDeferredStartEvent {
+    /// The callback kind reported by the underlying API.
     pub kind: String,
 }
 
@@ -87,6 +113,7 @@ struct DeferredStartDelegateCallbackState {
 }
 
 #[derive(Debug)]
+/// Wraps `AVCaptureControl`.
 pub struct CaptureControl {
     pub(crate) ptr: *mut c_void,
 }
@@ -109,6 +136,7 @@ impl CaptureControl {
         self.ptr
     }
 
+    /// Returns a snapshot of `AVCaptureControl` state.
     pub fn info(&self) -> Result<CaptureControlInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe { ffi::session::av_capture_control_info_json(self.ptr, &mut err) };
@@ -122,48 +150,59 @@ impl CaptureControl {
         parse_json_and_free(json_ptr)
     }
 
+    /// Corresponds to `AVCaptureControl.kind`.
     pub fn kind(&self) -> Result<String, AVCaptureError> {
         Ok(self.info()?.kind)
     }
 
+    /// Returns whether `AVCaptureControl` is enabled.
     pub fn is_enabled(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.enabled)
     }
 
+    /// Sets the enabled on `AVCaptureControl`.
     pub fn set_enabled(&self, enabled: bool) {
         unsafe { ffi::session::av_capture_control_set_enabled(self.ptr, enabled) };
     }
 
+    /// Corresponds to `AVCaptureControl.localized_title`.
     pub fn localized_title(&self) -> Result<Option<String>, AVCaptureError> {
         Ok(self.info()?.localized_title)
     }
 
+    /// Corresponds to `AVCaptureControl.symbol_name`.
     pub fn symbol_name(&self) -> Result<Option<String>, AVCaptureError> {
         Ok(self.info()?.symbol_name)
     }
 
+    /// Corresponds to `AVCaptureControl.accessibility_identifier`.
     pub fn accessibility_identifier(&self) -> Result<Option<String>, AVCaptureError> {
         Ok(self.info()?.accessibility_identifier)
     }
 
+    /// Returns whether `AVCaptureControl` is index picker.
     pub fn is_index_picker(&self) -> Result<bool, AVCaptureError> {
         Ok(self.kind()? == "indexPicker")
     }
 
+    /// Returns whether `AVCaptureControl` is slider.
     pub fn is_slider(&self) -> Result<bool, AVCaptureError> {
         Ok(self.kind()? == "slider")
     }
 
+    /// Returns whether `AVCaptureControl` is system exposure bias slider.
     pub fn is_system_exposure_bias_slider(&self) -> Result<bool, AVCaptureError> {
         Ok(self.kind()? == "systemExposureBiasSlider")
     }
 
+    /// Returns whether `AVCaptureControl` is system zoom slider.
     pub fn is_system_zoom_slider(&self) -> Result<bool, AVCaptureError> {
         Ok(self.kind()? == "systemZoomSlider")
     }
 }
 
 #[derive(Debug)]
+/// Wraps `AVCaptureIndexPicker`.
 pub struct CaptureIndexPicker {
     control: CaptureControl,
 }
@@ -252,6 +291,7 @@ impl CaptureIndexPicker {
         })
     }
 
+    /// Returns a snapshot of `AVCaptureIndexPicker` state.
     pub fn info(&self) -> Result<CaptureIndexPickerInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
@@ -266,22 +306,27 @@ impl CaptureIndexPicker {
         parse_json_and_free(json_ptr)
     }
 
+    /// Corresponds to `AVCaptureIndexPicker.selected_index`.
     pub fn selected_index(&self) -> Result<usize, AVCaptureError> {
         Ok(self.info()?.selected_index)
     }
 
+    /// Corresponds to `AVCaptureIndexPicker.number_of_indexes`.
     pub fn number_of_indexes(&self) -> Result<usize, AVCaptureError> {
         Ok(self.info()?.number_of_indexes)
     }
 
+    /// Corresponds to `AVCaptureIndexPicker.localized_index_titles`.
     pub fn localized_index_titles(&self) -> Result<Vec<String>, AVCaptureError> {
         Ok(self.info()?.localized_index_titles)
     }
 
+    /// Returns whether `AVCaptureIndexPicker` has action handler.
     pub fn has_action_handler(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.has_action_handler)
     }
 
+    /// Sets the selected index on `AVCaptureIndexPicker`.
     pub fn set_selected_index(&self, selected_index: usize) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
@@ -301,6 +346,7 @@ impl CaptureIndexPicker {
         Ok(())
     }
 
+    /// Sets the action handler on `AVCaptureIndexPicker`.
     pub fn set_action_handler<F>(
         &self,
         queue_label: Option<&str>,
@@ -340,12 +386,14 @@ impl CaptureIndexPicker {
         Ok(())
     }
 
+    /// Clears the action handler on `AVCaptureIndexPicker`.
     pub fn clear_action_handler(&self) {
         unsafe { ffi::session::av_capture_index_picker_clear_action_callback(self.control.ptr) };
     }
 }
 
 #[derive(Debug)]
+/// Wraps `AVCaptureSlider`.
 pub struct CaptureSlider {
     control: CaptureControl,
 }
@@ -473,6 +521,7 @@ impl CaptureSlider {
         })
     }
 
+    /// Returns a snapshot of `AVCaptureSlider` state.
     pub fn info(&self) -> Result<CaptureSliderInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
@@ -487,34 +536,42 @@ impl CaptureSlider {
         parse_json_and_free(json_ptr)
     }
 
+    /// Corresponds to `AVCaptureSlider.value`.
     pub fn value(&self) -> Result<f32, AVCaptureError> {
         Ok(self.info()?.value)
     }
 
+    /// Corresponds to `AVCaptureSlider.min_value`.
     pub fn min_value(&self) -> Result<Option<f32>, AVCaptureError> {
         Ok(self.info()?.min_value)
     }
 
+    /// Corresponds to `AVCaptureSlider.max_value`.
     pub fn max_value(&self) -> Result<Option<f32>, AVCaptureError> {
         Ok(self.info()?.max_value)
     }
 
+    /// Corresponds to `AVCaptureSlider.values`.
     pub fn values(&self) -> Result<Vec<f32>, AVCaptureError> {
         Ok(self.info()?.values)
     }
 
+    /// Corresponds to `AVCaptureSlider.localized_value_format`.
     pub fn localized_value_format(&self) -> Result<Option<String>, AVCaptureError> {
         Ok(self.info()?.localized_value_format)
     }
 
+    /// Corresponds to `AVCaptureSlider.prominent_values`.
     pub fn prominent_values(&self) -> Result<Vec<f32>, AVCaptureError> {
         Ok(self.info()?.prominent_values)
     }
 
+    /// Returns whether `AVCaptureSlider` has action handler.
     pub fn has_action_handler(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.has_action_handler)
     }
 
+    /// Sets the value on `AVCaptureSlider`.
     pub fn set_value(&self, value: f32) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status =
@@ -529,6 +586,7 @@ impl CaptureSlider {
         Ok(())
     }
 
+    /// Sets the action handler on `AVCaptureSlider`.
     pub fn set_action_handler<F>(
         &self,
         queue_label: Option<&str>,
@@ -568,12 +626,14 @@ impl CaptureSlider {
         Ok(())
     }
 
+    /// Clears the action handler on `AVCaptureSlider`.
     pub fn clear_action_handler(&self) {
         unsafe { ffi::session::av_capture_slider_clear_action_callback(self.control.ptr) };
     }
 }
 
 #[derive(Debug)]
+/// Wraps `AVCaptureSystemExposureBiasSlider`.
 pub struct CaptureSystemExposureBiasSlider {
     control: CaptureControl,
 }
@@ -650,6 +710,7 @@ impl CaptureSystemExposureBiasSlider {
 }
 
 #[derive(Debug)]
+/// Wraps `AVCaptureSystemZoomSlider`.
 pub struct CaptureSystemZoomSlider {
     control: CaptureControl,
 }

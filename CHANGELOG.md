@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.4] - 2026-05-18
+
+### Changed
+- Added rustdoc coverage across the safe `src/` surface, documenting public wrappers, enums, info snapshots, fields, and callback or stream helpers against their `AVCapture*` counterparts.
+
 ## [0.4.3] - 2026-05-18
 
 - Widen apple-cf version bound to `<0.10` so 0.9.x resolves.

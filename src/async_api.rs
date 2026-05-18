@@ -19,24 +19,34 @@ use crate::helpers::cstring;
 use crate::{ffi, CaptureRect, MetadataObject};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Event payload derived from `AVCaptureSession` callbacks.
 pub enum SessionRunningEvent {
+    /// Corresponds to the `Started` case.
     Started,
+    /// Corresponds to the `Stopped` case.
     Stopped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Event payload derived from `AVCaptureSession` runtime-error notifications.
 pub struct SessionErrorEvent {
+    /// The textual description reported by the underlying API.
     pub description: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Event-kind values produced by `AVCaptureSession` callbacks.
 pub enum InterruptionKind {
+    /// Corresponds to the `Interrupted` case.
     Interrupted,
+    /// Corresponds to the `InterruptionEnded` case.
     InterruptionEnded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Event payload derived from `AVCaptureSession` interruption notifications.
 pub struct InterruptionEvent {
+    /// The callback kind reported by the underlying API.
     pub kind: InterruptionKind,
 }
 
@@ -48,8 +58,11 @@ pub struct InterruptionEvent {
 /// the backing pixel memory. Prefer moving or consuming the event rather than
 /// cloning it in the ~60 Hz hot path.
 #[derive(Debug, Clone)]
+/// Event payload derived from `AVCaptureVideoDataOutputSampleBufferDelegate` callbacks.
 pub struct VideoSampleBufferEvent {
+    /// The retained `CMSampleBuffer` delivered by the callback.
     pub sample_buffer: CMSampleBuffer,
+    /// The associated `CVPixelBuffer`, if one was delivered.
     pub pixel_buffer: Option<CVPixelBuffer>,
 }
 
@@ -59,28 +72,42 @@ pub struct VideoSampleBufferEvent {
 /// `CMSampleBufferRef` — it does **not** copy audio PCM data. Prefer moving
 /// the event rather than cloning it.
 #[derive(Debug, Clone)]
+/// Event payload derived from `AVCaptureAudioDataOutputSampleBufferDelegate` callbacks.
 pub struct AudioSampleBufferEvent {
+    /// The retained `CMSampleBuffer` delivered by the callback.
     pub sample_buffer: CMSampleBuffer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Event-kind values produced by `AVCaptureFileOutputRecordingDelegate` callbacks.
 pub enum FileRecordingKind {
+    /// Corresponds to the `Started` case.
     Started,
+    /// Corresponds to the `Paused` case.
     Paused,
+    /// Corresponds to the `Resumed` case.
     Resumed,
+    /// Corresponds to the `WillFinish` case.
     WillFinish,
+    /// Corresponds to the `Finished` case.
     Finished,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Async recording event payload derived from `AVCaptureFileOutputRecordingDelegate` callbacks.
 pub struct FileRecordingStreamEvent {
+    /// The callback kind reported by the underlying API.
     pub kind: FileRecordingKind,
+    /// The file url reported by `AVCaptureFileOutputRecordingDelegate`.
     pub file_url: String,
+    /// The error message, if any.
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Async event payload produced by `AVCaptureMetadataOutputObjectsDelegate` callbacks.
 pub struct MetadataObjectsStreamEvent {
+    /// The metadata objects delivered by the callback.
     pub objects: Vec<MetadataObject>,
 }
 
@@ -194,18 +221,22 @@ unsafe impl<T: Send> Sync for SenderBox<T> {}
 macro_rules! impl_stream_common {
     ($ty:ident, $event:ty) => {
         impl $ty {
+            /// Returns the next buffered event.
             pub fn next(&self) -> doom_fish_utils::stream::NextItem<'_, $event> {
                 self.inner.next()
             }
 
+            /// Returns the next buffered event if one is available.
             pub fn try_next(&self) -> Option<$event> {
                 self.inner.try_next()
             }
 
+            /// Returns the number of currently buffered events.
             pub fn buffered_count(&self) -> usize {
                 self.inner.buffered_count()
             }
 
+            /// Returns whether the stream has been closed.
             pub fn is_closed(&self) -> bool {
                 self.inner.is_closed()
             }
@@ -434,6 +465,7 @@ unsafe extern "C" fn metadata_objects_cb(kind: i32, payload: *mut c_char, ctx: *
 }
 
 #[derive(Debug)]
+/// Async stream of events sourced from `AVCaptureSession`.
 pub struct SessionRunningStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<SessionRunningEvent>,
@@ -441,6 +473,7 @@ pub struct SessionRunningStream {
 }
 
 impl SessionRunningStream {
+    /// Subscribes to `AVCaptureSession` updates with the given buffer capacity.
     pub fn subscribe(session: &crate::CaptureSession, capacity: usize) -> Self {
         let (inner, sender_box, ctx) = stream_parts(capacity);
         let handle_ptr = unsafe {
@@ -465,6 +498,7 @@ impl SessionRunningStream {
 impl_stream_common!(SessionRunningStream, SessionRunningEvent);
 
 #[derive(Debug)]
+/// Async stream of events sourced from `AVCaptureSession`.
 pub struct SessionErrorStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<SessionErrorEvent>,
@@ -472,6 +506,7 @@ pub struct SessionErrorStream {
 }
 
 impl SessionErrorStream {
+    /// Subscribes to `AVCaptureSession` updates with the given buffer capacity.
     pub fn subscribe(session: &crate::CaptureSession, capacity: usize) -> Self {
         let (inner, sender_box, ctx) = stream_parts(capacity);
         let handle_ptr = unsafe {
@@ -496,6 +531,7 @@ impl SessionErrorStream {
 impl_stream_common!(SessionErrorStream, SessionErrorEvent);
 
 #[derive(Debug)]
+/// Async stream of events sourced from `AVCaptureSession`.
 pub struct SessionInterruptionStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<InterruptionEvent>,
@@ -503,6 +539,7 @@ pub struct SessionInterruptionStream {
 }
 
 impl SessionInterruptionStream {
+    /// Subscribes to `AVCaptureSession` updates with the given buffer capacity.
     pub fn subscribe(session: &crate::CaptureSession, capacity: usize) -> Self {
         let (inner, sender_box, ctx) = stream_parts(capacity);
         let handle_ptr = unsafe {
@@ -527,6 +564,7 @@ impl SessionInterruptionStream {
 impl_stream_common!(SessionInterruptionStream, InterruptionEvent);
 
 #[derive(Debug)]
+/// Async stream of events sourced from `AVCaptureVideoDataOutput`.
 pub struct VideoSampleBufferStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<VideoSampleBufferEvent>,
@@ -534,6 +572,7 @@ pub struct VideoSampleBufferStream {
 }
 
 impl VideoSampleBufferStream {
+    /// Subscribes to `AVCaptureVideoDataOutput` updates with the given buffer capacity.
     pub fn subscribe(output: &crate::VideoDataOutput, capacity: usize) -> Self {
         let (inner, sender_box, ctx) = stream_parts(capacity);
         let queue_label =
@@ -561,6 +600,7 @@ impl VideoSampleBufferStream {
 impl_stream_common!(VideoSampleBufferStream, VideoSampleBufferEvent);
 
 #[derive(Debug)]
+/// Async stream of events sourced from `AVCaptureAudioDataOutput`.
 pub struct AudioSampleBufferStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<AudioSampleBufferEvent>,
@@ -568,6 +608,7 @@ pub struct AudioSampleBufferStream {
 }
 
 impl AudioSampleBufferStream {
+    /// Subscribes to `AVCaptureAudioDataOutput` updates with the given buffer capacity.
     pub fn subscribe(output: &crate::AudioDataOutput, capacity: usize) -> Self {
         let (inner, sender_box, ctx) = stream_parts(capacity);
         let queue_label =
@@ -595,6 +636,7 @@ impl AudioSampleBufferStream {
 impl_stream_common!(AudioSampleBufferStream, AudioSampleBufferEvent);
 
 #[derive(Debug)]
+/// Async stream of events sourced from `AVCaptureMovieFileOutput`.
 pub struct FileRecordingStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<FileRecordingStreamEvent>,
@@ -602,6 +644,7 @@ pub struct FileRecordingStream {
 }
 
 impl FileRecordingStream {
+    /// Starts `AVCaptureMovieFileOutput` event delivery and returns an async stream.
     pub fn start(
         output: &crate::MovieFileOutput,
         path: &Path,
@@ -633,6 +676,7 @@ impl FileRecordingStream {
 impl_stream_common!(FileRecordingStream, FileRecordingStreamEvent);
 
 #[derive(Debug)]
+/// Async stream of events sourced from `AVCaptureMetadataOutput`.
 pub struct MetadataObjectsStream {
     _handle: StreamHandle,
     _sender_box: SenderBox<MetadataObjectsStreamEvent>,
@@ -640,6 +684,7 @@ pub struct MetadataObjectsStream {
 }
 
 impl MetadataObjectsStream {
+    /// Subscribes to `AVCaptureMetadataOutput` updates with the given buffer capacity.
     pub fn subscribe(output: &crate::MetadataOutput, capacity: usize) -> Self {
         let (inner, sender_box, ctx) = stream_parts(capacity);
         let queue_label =

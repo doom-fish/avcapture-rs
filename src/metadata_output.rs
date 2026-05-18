@@ -13,25 +13,37 @@ use crate::output::CaptureOutputRef;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Snapshot of `AVCaptureMetadataOutput` state.
 pub struct MetadataOutputInfo {
+    /// The connection count reported by `AVCaptureMetadataOutput`.
     pub connection_count: usize,
+    /// The metadata object types reported by `AVCaptureMetadataOutput`.
     pub metadata_object_types: Vec<String>,
+    /// The available metadata object types reported by `AVCaptureMetadataOutput`.
     pub available_metadata_object_types: Vec<String>,
+    /// The rect of interest reported by `AVCaptureMetadataOutput`.
     pub rect_of_interest: CaptureRect,
+    /// The callback installed reported by `AVCaptureMetadataOutput`.
     pub callback_installed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Wraps `AVMetadataObject`.
 pub struct MetadataObject {
+    /// The object type reported by `AVMetadataObject`.
     pub object_type: String,
+    /// The string value reported by `AVMetadataObject`.
     pub string_value: Option<String>,
+    /// The bounds reported by `AVMetadataObject`.
     pub bounds: CaptureRect,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Event payload produced by `AVCaptureMetadataOutputObjectsDelegate` callbacks.
 pub struct MetadataObjectsEvent {
+    /// The metadata objects delivered by the callback.
     pub objects: Vec<MetadataObject>,
 }
 
@@ -41,6 +53,7 @@ struct MetadataCallbackState {
 
 /// Safe wrapper around `AVCaptureMetadataOutput`.
 #[derive(Debug)]
+/// Wraps `AVCaptureMetadataOutput`.
 pub struct MetadataOutput {
     pub(crate) ptr: *mut c_void,
 }
@@ -61,6 +74,7 @@ impl CaptureOutputRef for MetadataOutput {
 }
 
 impl MetadataOutput {
+    /// Creates a new `AVCaptureMetadataOutput` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe { ffi::metadata_output::av_capture_metadata_output_create(&mut err) };
@@ -70,6 +84,7 @@ impl MetadataOutput {
         Ok(Self { ptr })
     }
 
+    /// Returns a snapshot of `AVCaptureMetadataOutput` state.
     pub fn info(&self) -> Result<MetadataOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
@@ -81,26 +96,32 @@ impl MetadataOutput {
         parse_json_and_free(json_ptr)
     }
 
+    /// Returns the connection count reported by `AVCaptureMetadataOutput`.
     pub fn connection_count(&self) -> Result<usize, AVCaptureError> {
         Ok(self.info()?.connection_count)
     }
 
+    /// Corresponds to `AVCaptureMetadataOutput.metadata_object_types`.
     pub fn metadata_object_types(&self) -> Result<Vec<String>, AVCaptureError> {
         Ok(self.info()?.metadata_object_types)
     }
 
+    /// Returns the available metadata object types reported by `AVCaptureMetadataOutput`.
     pub fn available_metadata_object_types(&self) -> Result<Vec<String>, AVCaptureError> {
         Ok(self.info()?.available_metadata_object_types)
     }
 
+    /// Corresponds to `AVCaptureMetadataOutput.rect_of_interest`.
     pub fn rect_of_interest(&self) -> Result<CaptureRect, AVCaptureError> {
         Ok(self.info()?.rect_of_interest)
     }
 
+    /// Corresponds to `AVCaptureMetadataOutput.callback_installed`.
     pub fn callback_installed(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.callback_installed)
     }
 
+    /// Sets the metadata object types on `AVCaptureMetadataOutput`.
     pub fn set_metadata_object_types<I, S>(&self, types: I) -> Result<(), AVCaptureError>
     where
         I: IntoIterator<Item = S>,
@@ -125,6 +146,7 @@ impl MetadataOutput {
         Ok(())
     }
 
+    /// Sets the rect of interest on `AVCaptureMetadataOutput`.
     pub fn set_rect_of_interest(&self, rect: &CaptureRect) -> Result<(), AVCaptureError> {
         let json = json_cstring(rect, "metadata output rect of interest")?;
         let mut err: *mut c_char = ptr::null_mut();
@@ -141,6 +163,7 @@ impl MetadataOutput {
         Ok(())
     }
 
+    /// Sets the metadata objects handler on `AVCaptureMetadataOutput`.
     pub fn set_metadata_objects_handler<F>(
         &self,
         queue_label: Option<&str>,
@@ -175,6 +198,7 @@ impl MetadataOutput {
         Ok(())
     }
 
+    /// Clears the metadata objects handler on `AVCaptureMetadataOutput`.
     pub fn clear_metadata_objects_handler(&self) {
         unsafe {
             ffi::metadata_output::av_capture_metadata_output_clear_metadata_objects_callback(

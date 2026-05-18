@@ -20,6 +20,7 @@ struct DiscoveryCriteria {
 
 /// Safe wrapper around `AVCaptureDeviceDiscoverySession`.
 #[derive(Debug)]
+/// Wraps `AVCaptureDeviceDiscoverySession`.
 pub struct CaptureDeviceDiscoverySession {
     ptr: *mut c_void,
 }
@@ -38,6 +39,7 @@ impl Drop for CaptureDeviceDiscoverySession {
 }
 
 impl CaptureDeviceDiscoverySession {
+    /// Creates a new `AVCaptureDeviceDiscoverySession` wrapper.
     pub fn new(
         device_types: &[CaptureDeviceType],
         media_type: Option<&MediaType>,
@@ -65,6 +67,7 @@ impl CaptureDeviceDiscoverySession {
         Ok(Self { ptr })
     }
 
+    /// Returns the devices matching the requested media type.
     pub fn devices(&self) -> Result<Vec<CaptureDevice>, AVCaptureError> {
         let count = unsafe {
             ffi::device_discovery_session::av_capture_device_discovery_session_devices_count(

@@ -23,9 +23,13 @@ use crate::session::CaptureSession;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Snapshot of `AVCaptureVideoPreviewLayer` state.
 pub struct VideoPreviewLayerInfo {
+    /// The session attached reported by `AVCaptureVideoPreviewLayer`.
     pub session_attached: bool,
+    /// The connection present reported by `AVCaptureVideoPreviewLayer`.
     pub connection_present: bool,
+    /// The video gravity reported by `AVCaptureVideoPreviewLayer`.
     pub video_gravity: String,
 }
 
@@ -48,6 +52,7 @@ impl CapturePointPayload {
 
 /// Safe wrapper around `AVCaptureVideoPreviewLayer`.
 #[derive(Debug)]
+/// Wraps `AVCaptureVideoPreviewLayer`.
 pub struct VideoPreviewLayer {
     ptr: *mut c_void,
 }
@@ -62,6 +67,7 @@ impl Drop for VideoPreviewLayer {
 }
 
 impl VideoPreviewLayer {
+    /// Creates a new `AVCaptureVideoPreviewLayer` wrapper.
     pub fn new(session: &CaptureSession) -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
@@ -73,6 +79,7 @@ impl VideoPreviewLayer {
         Ok(Self { ptr })
     }
 
+    /// Returns a snapshot of `AVCaptureVideoPreviewLayer` state.
     pub fn info(&self) -> Result<VideoPreviewLayerInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
@@ -84,18 +91,22 @@ impl VideoPreviewLayer {
         parse_json_and_free(json_ptr)
     }
 
+    /// Corresponds to `AVCaptureVideoPreviewLayer.session_attached`.
     pub fn session_attached(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.session_attached)
     }
 
+    /// Corresponds to `AVCaptureVideoPreviewLayer.connection_present`.
     pub fn connection_present(&self) -> Result<bool, AVCaptureError> {
         Ok(self.info()?.connection_present)
     }
 
+    /// Corresponds to `AVCaptureVideoPreviewLayer.video_gravity`.
     pub fn video_gravity(&self) -> Result<String, AVCaptureError> {
         Ok(self.info()?.video_gravity)
     }
 
+    /// Returns the connection matching the requested media type, if available.
     pub fn connection(&self) -> Result<Option<CaptureConnection>, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
@@ -110,6 +121,7 @@ impl VideoPreviewLayer {
         Ok(Some(CaptureConnection::from_raw(ptr)))
     }
 
+    /// Sets the video gravity on `AVCaptureVideoPreviewLayer`.
     pub fn set_video_gravity(&self, video_gravity: impl AsRef<str>) -> Result<(), AVCaptureError> {
         let video_gravity = cstring(video_gravity.as_ref(), "video gravity")?;
         let mut err: *mut c_char = ptr::null_mut();
@@ -126,6 +138,7 @@ impl VideoPreviewLayer {
         Ok(())
     }
 
+    /// Sets the session on `AVCaptureVideoPreviewLayer`.
     pub fn set_session(&self, session: &CaptureSession) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
@@ -141,10 +154,12 @@ impl VideoPreviewLayer {
         Ok(())
     }
 
+    /// Clears the session on `AVCaptureVideoPreviewLayer`.
     pub fn clear_session(&self) {
         unsafe { ffi::video_preview_layer::av_capture_video_preview_layer_clear_session(self.ptr) };
     }
 
+    /// Sets the session with no connection on `AVCaptureVideoPreviewLayer`.
     pub fn set_session_with_no_connection(
         &self,
         session: &CaptureSession,
@@ -163,6 +178,7 @@ impl VideoPreviewLayer {
         Ok(())
     }
 
+    /// Corresponds to `AVCaptureVideoPreviewLayer.capture_device_point_of_interest_for_point`.
     pub fn capture_device_point_of_interest_for_point(
         &self,
         point: (f64, f64),
@@ -185,6 +201,7 @@ impl VideoPreviewLayer {
         Ok(parse_json_and_free::<CapturePointPayload>(json_ptr)?.into_tuple())
     }
 
+    /// Corresponds to `AVCaptureVideoPreviewLayer.point_for_capture_device_point_of_interest`.
     pub fn point_for_capture_device_point_of_interest(
         &self,
         point: (f64, f64),
@@ -207,6 +224,7 @@ impl VideoPreviewLayer {
         Ok(parse_json_and_free::<CapturePointPayload>(json_ptr)?.into_tuple())
     }
 
+    /// Corresponds to `AVCaptureVideoPreviewLayer.metadata_output_rect_of_interest_for_rect`.
     pub fn metadata_output_rect_of_interest_for_rect(
         &self,
         rect: &CaptureRect,
@@ -226,6 +244,7 @@ impl VideoPreviewLayer {
         parse_json_and_free(json_ptr)
     }
 
+    /// Corresponds to `AVCaptureVideoPreviewLayer.rect_for_metadata_output_rect_of_interest`.
     pub fn rect_for_metadata_output_rect_of_interest(
         &self,
         rect: &CaptureRect,
