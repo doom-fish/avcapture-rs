@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0] - 2026-05-20
+
+### Changed
+- Widened `apple-cf` to `>=0.4, <0.9` and aligned `CaptureRect` field access with the nested `origin`/`size` layout used by `apple-cf` 0.8.
+- Kept `CaptureRect`'s bridge JSON shape flat (`x`, `y`, `width`, `height`) so the Swift bridge payload stays unchanged.
+
 ## [0.3.1] - 2026-05-20
 
 ### Fixed

@@ -12,21 +12,49 @@ use crate::ffi;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CaptureRect {
+#[repr(C)]
+pub struct CapturePoint {
     pub x: f64,
     pub y: f64,
+}
+
+impl CapturePoint {
+    #[must_use]
+    pub const fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[repr(C)]
+pub struct CaptureSize {
     pub width: f64,
     pub height: f64,
+}
+
+impl CaptureSize {
+    #[must_use]
+    pub const fn new(width: f64, height: f64) -> Self {
+        Self { width, height }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[repr(C)]
+pub struct CaptureRect {
+    #[serde(flatten)]
+    pub origin: CapturePoint,
+    #[serde(flatten)]
+    pub size: CaptureSize,
 }
 
 impl CaptureRect {
     #[must_use]
     pub const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
         Self {
-            x,
-            y,
-            width,
-            height,
+            origin: CapturePoint::new(x, y),
+            size: CaptureSize::new(width, height),
         }
     }
 }

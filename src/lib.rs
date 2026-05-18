@@ -51,7 +51,7 @@ pub use device_format::{
 pub use device_input::{CaptureMultichannelAudioMode, DeviceInput, DeviceInputInfo};
 pub use device_position::CaptureDevicePosition;
 pub use error::AVCaptureError;
-pub use helpers::{CaptureRect, VideoDimensions};
+pub use helpers::{CapturePoint, CaptureRect, CaptureSize, VideoDimensions};
 pub use input::{CaptureInputInfo, CaptureInputPortInfo, CaptureInputRef};
 pub use metadata_output::{
     MetadataObject, MetadataObjectsEvent, MetadataOutput, MetadataOutputInfo,
@@ -109,17 +109,17 @@ pub mod prelude {
         CaptureDeviceType, CaptureExposureMode, CaptureFlashMode, CaptureFocusMode,
         CaptureIndexPicker, CaptureIndexPickerInfo, CaptureInputInfo, CaptureInputPortInfo,
         CaptureInputRef, CaptureMicrophoneMode, CaptureMultichannelAudioMode,
-        CaptureOutputDataDroppedReason, CaptureOutputInfo, CaptureOutputRef,
+        CaptureOutputDataDroppedReason, CaptureOutputInfo, CaptureOutputRef, CapturePoint,
         CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions,
         CapturePrimaryConstituentDeviceSwitchingBehavior, CaptureReactionEffectState,
         CaptureReactionType, CaptureRect, CaptureSceneMonitoringStatus, CaptureSession,
         CaptureSessionControlsEvent, CaptureSessionDeferredStartEvent, CaptureSessionInfo,
-        CaptureSessionPreset, CaptureSlider, CaptureSliderInfo, CaptureSystemExposureBiasSlider,
-        CaptureSystemUserInterface, CaptureSystemZoomSlider, CaptureTimecode,
-        CaptureTimecodeGenerator, CaptureTimecodeGeneratorEvent, CaptureTimecodeGeneratorInfo,
-        CaptureTimecodeGeneratorSynchronizationStatus, CaptureTimecodeSource,
-        CaptureTimecodeSourceInfo, CaptureTimecodeSourceType, CaptureTorchMode,
-        CaptureWhiteBalanceMode, DeskViewApplication, DeskViewApplicationInfo,
+        CaptureSessionPreset, CaptureSize, CaptureSlider, CaptureSliderInfo,
+        CaptureSystemExposureBiasSlider, CaptureSystemUserInterface, CaptureSystemZoomSlider,
+        CaptureTimecode, CaptureTimecodeGenerator, CaptureTimecodeGeneratorEvent,
+        CaptureTimecodeGeneratorInfo, CaptureTimecodeGeneratorSynchronizationStatus,
+        CaptureTimecodeSource, CaptureTimecodeSourceInfo, CaptureTimecodeSourceType,
+        CaptureTorchMode, CaptureWhiteBalanceMode, DeskViewApplication, DeskViewApplicationInfo,
         DeskViewApplicationLaunchConfiguration, DeskViewApplicationLaunchConfigurationInfo,
         DeviceInput, DeviceInputInfo, ExternalDisplayConfiguration,
         ExternalDisplayConfigurationInfo, ExternalDisplayConfigurator,

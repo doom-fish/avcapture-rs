@@ -108,10 +108,10 @@ impl ScreenInput {
         unsafe {
             ffi::screen_input::av_capture_screen_input_set_crop_rect(
                 self.ptr,
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
+                rect.origin.x,
+                rect.origin.y,
+                rect.size.width,
+                rect.size.height,
             );
         }
     }

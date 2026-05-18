@@ -30,18 +30,18 @@ fn video_preview_layer_smoke() -> common::TestResult {
     let rect = CaptureRect::new(0.0, 0.0, 0.0, 0.0);
     let metadata_rect = layer.metadata_output_rect_of_interest_for_rect(&rect)?;
     assert!(
-        metadata_rect.x.is_finite()
-            && metadata_rect.y.is_finite()
-            && metadata_rect.width.is_finite()
-            && metadata_rect.height.is_finite()
+        metadata_rect.origin.x.is_finite()
+            && metadata_rect.origin.y.is_finite()
+            && metadata_rect.size.width.is_finite()
+            && metadata_rect.size.height.is_finite()
     );
 
     let layer_rect = layer.rect_for_metadata_output_rect_of_interest(&rect)?;
     assert!(
-        layer_rect.x.is_finite()
-            && layer_rect.y.is_finite()
-            && layer_rect.width.is_finite()
-            && layer_rect.height.is_finite()
+        layer_rect.origin.x.is_finite()
+            && layer_rect.origin.y.is_finite()
+            && layer_rect.size.width.is_finite()
+            && layer_rect.size.height.is_finite()
     );
     Ok(())
 }
