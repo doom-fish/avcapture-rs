@@ -48,7 +48,8 @@ pub use device::{
 };
 pub use device_discovery_session::CaptureDeviceDiscoverySession;
 pub use device_format::{
-    CaptureDeviceFormat, CaptureDeviceFormatInfo, FormatDescriptionInfo, FrameRateRange,
+    CaptureDeviceFormat, CaptureDeviceFormatInfo, ExposureBiasRange, FormatDescriptionInfo,
+    FrameRateRange, ZoomRange,
 };
 pub use device_input::{CaptureMultichannelAudioMode, DeviceInput, DeviceInputInfo};
 pub use device_position::CaptureDevicePosition;
@@ -123,7 +124,7 @@ pub mod prelude {
         CaptureTimecodeSource, CaptureTimecodeSourceInfo, CaptureTimecodeSourceType,
         CaptureTorchMode, CaptureWhiteBalanceMode, DeskViewApplication, DeskViewApplicationInfo,
         DeskViewApplicationLaunchConfiguration, DeskViewApplicationLaunchConfigurationInfo,
-        DeviceInput, DeviceInputInfo, ExternalDisplayConfiguration,
+        DeviceInput, DeviceInputInfo, ExposureBiasRange, ExternalDisplayConfiguration,
         ExternalDisplayConfigurationInfo, ExternalDisplayConfigurator,
         ExternalDisplayConfiguratorInfo, ExternalDisplaySupportInfo, FormatDescriptionInfo,
         FrameRateRange, MediaType, MetadataObject, MetadataObjectsEvent, MetadataOutput,
@@ -133,6 +134,6 @@ pub mod prelude {
         PhotoQualityPrioritization, PhotoSettings, PhotoSettingsInfo, ResolvedPhotoSettings,
         ResolvedPhotoSettingsInfo, ScreenInput, ScreenInputInfo, TimecodeMetadataSampleBuffer,
         VideoDataOutput, VideoDataOutputInfo, VideoDimensions, VideoOutputSettings,
-        VideoPreviewLayer, VideoPreviewLayerInfo,
+        VideoPreviewLayer, VideoPreviewLayerInfo, ZoomRange,
     };
 }

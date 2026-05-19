@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.5] - 2026-05-19
+
+### Added
+- Wrapped `AVExposureBiasRange`, `AVFrameRateRange`, and `AVZoomRange` through `CaptureDeviceFormat`, including recommended zoom / exposure-bias ranges and effect-specific frame-rate range inspection.
+
 ## [0.4.4] - 2026-05-18
 
 ### Changed
