@@ -6,6 +6,7 @@
 /// Async stream adapters for `AVCapture*` notifications and delegate callbacks.
 pub mod async_api;
 mod audio_data_output;
+mod camera_calibration_data;
 mod connection;
 mod device;
 mod device_discovery_session;
@@ -30,6 +31,9 @@ mod video_preview_layer;
 pub use audio_data_output::{
     AudioDataOutput, AudioDataOutputInfo, AudioOutputSettings, AudioPreviewOutput,
     AudioPreviewOutputInfo,
+};
+pub use camera_calibration_data::{
+    CameraCalibrationData, CameraCalibrationDataInfo, CameraExtrinsicMatrix, CameraIntrinsicMatrix,
 };
 pub use connection::{
     CaptureAudioChannel, CaptureAudioChannelInfo, CaptureConnection, CaptureConnectionInfo,
@@ -101,13 +105,15 @@ pub mod prelude {
         AVCaptureError, AVCaptureOutputDataDroppedReason, AudioDataOutput, AudioDataOutputInfo,
         AudioFileOutput, AudioFileOutputInfo, AudioFileRecordingEvent, AudioFileRecordingEventKind,
         AudioOutputSettings, AudioPreviewOutput, AudioPreviewOutputInfo, AuthorizationStatus,
-        CaptureAudioChannel, CaptureAudioChannelInfo, CaptureAutoFocusSystem,
-        CaptureCameraLensSmudgeDetectionStatus, CaptureCenterStageControlMode,
-        CaptureCinematicVideoFocusMode, CaptureColorSpace, CaptureConnection,
-        CaptureConnectionInfo, CaptureControl, CaptureControlInfo, CaptureDevice,
-        CaptureDeviceConfigurationLock, CaptureDeviceDetails, CaptureDeviceDiscoverySession,
-        CaptureDeviceFormat, CaptureDeviceFormatInfo, CaptureDeviceInfo, CaptureDeviceInputSource,
-        CaptureDeviceInputSourceInfo, CaptureDevicePosition, CaptureDeviceRotationCoordinator,
+        CameraCalibrationData, CameraCalibrationDataInfo, CameraExtrinsicMatrix,
+        CameraIntrinsicMatrix, CaptureAudioChannel, CaptureAudioChannelInfo,
+        CaptureAutoFocusSystem, CaptureCameraLensSmudgeDetectionStatus,
+        CaptureCenterStageControlMode, CaptureCinematicVideoFocusMode, CaptureColorSpace,
+        CaptureConnection, CaptureConnectionInfo, CaptureControl, CaptureControlInfo,
+        CaptureDevice, CaptureDeviceConfigurationLock, CaptureDeviceDetails,
+        CaptureDeviceDiscoverySession, CaptureDeviceFormat, CaptureDeviceFormatInfo,
+        CaptureDeviceInfo, CaptureDeviceInputSource, CaptureDeviceInputSourceInfo,
+        CaptureDevicePosition, CaptureDeviceRotationCoordinator,
         CaptureDeviceRotationCoordinatorInfo, CaptureDeviceTransportControlsPlaybackMode,
         CaptureDeviceType, CaptureExposureMode, CaptureFlashMode, CaptureFocusMode,
         CaptureIndexPicker, CaptureIndexPickerInfo, CaptureInputInfo, CaptureInputPortInfo,

@@ -17,6 +17,7 @@ pub type JsonCallback = unsafe extern "C" fn(userdata: *mut c_void, payload: *mu
 
 pub mod async_stream;
 pub mod audio_data_output;
+pub mod camera_calibration_data;
 pub mod connection;
 pub mod core;
 pub mod desk_view_application;

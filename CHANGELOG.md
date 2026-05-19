@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.6] - 2026-05-19
+
+### Added
+- Added `CameraCalibrationData` support with serde snapshots for camera intrinsics, extrinsics, pixel size, and lens-distortion lookup tables sourced from `AVCameraCalibrationData`.
+
 ## [0.4.5] - 2026-05-19
 
 ### Added

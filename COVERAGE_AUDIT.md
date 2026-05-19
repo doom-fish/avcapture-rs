@@ -1,9 +1,9 @@
 # avcapture-rs coverage audit (vs MacOSX26.2.sdk)
 
-Scope: top-level symbols from `AVCapture*.h` only (`@interface`, `@protocol`, typedef enums/structs, exported constants, and top-level C functions). Deprecated or `API_UNAVAILABLE(macos)` symbols are EXEMPT. Delegate protocols are counted as VERIFIED when `avcapture-rs` exposes an equivalent Rust callback surface.
+Scope: top-level symbols from `AVCameraCalibrationData.h` and `AVCapture*.h` only (`@interface`, `@protocol`, typedef enums/structs, exported constants, and top-level C functions). Deprecated or `API_UNAVAILABLE(macos)` symbols are EXEMPT. Delegate protocols are counted as VERIFIED when `avcapture-rs` exposes an equivalent Rust callback surface.
 
-SDK_PUBLIC_SYMBOLS: 112
-VERIFIED: 112
+SDK_PUBLIC_SYMBOLS: 113
+VERIFIED: 113
 GAPS: 0
 EXEMPT: 65
 COVERAGE_PCT: 100.0%
@@ -11,6 +11,7 @@ COVERAGE_PCT: 100.0%
 ## 🟢 VERIFIED
 | Symbol | Kind | Header | Wrapped by |
 | --- | --- | --- | --- |
+| AVCameraCalibrationData | interface | AVCameraCalibrationData.h | CameraCalibrationData / CameraCalibrationDataInfo |
 | AVCaptureAudioDataOutput | interface | AVCaptureAudioDataOutput.h | AudioDataOutput |
 | AVCaptureAudioDataOutputSampleBufferDelegate | protocol | AVCaptureAudioDataOutput.h | AudioDataOutput::set_sample_buffer_handler |
 | AVCaptureDevice | interface | AVCaptureDevice.h | CaptureDevice / CaptureDeviceInfo / CaptureDeviceDetails |
