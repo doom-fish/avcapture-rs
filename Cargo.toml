@@ -1,6 +1,6 @@
 [package]
 name = "avcapture"
-version = "0.4.6"
+version = "0.4.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/doom-fish/avcapture-rs"
@@ -9,7 +9,7 @@ description = "Safe Rust bindings for Apple's AVCapture devices, sessions, input
 authors = ["Per Johansson <per@doom.fish>"]
 keywords = ["avcapture", "avfoundation", "camera", "microphone", "macos"]
 categories = ["multimedia::video", "multimedia::audio", "api-bindings", "os::macos-apis"]
-rust-version = "1.70"
+rust-version = "1.76"
 readme = "README.md"
 build = "build.rs"
 include = [
