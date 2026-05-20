@@ -113,8 +113,14 @@ mod tests {
                 ffi::status::INVALID_ARGUMENT,
                 AVCaptureError::InvalidArgument(String::new()),
             ),
-            (ffi::status::DEVICE_ERROR, AVCaptureError::DeviceError(String::new())),
-            (ffi::status::INPUT_ERROR, AVCaptureError::InputError(String::new())),
+            (
+                ffi::status::DEVICE_ERROR,
+                AVCaptureError::DeviceError(String::new()),
+            ),
+            (
+                ffi::status::INPUT_ERROR,
+                AVCaptureError::InputError(String::new()),
+            ),
             (
                 ffi::status::SESSION_ERROR,
                 AVCaptureError::SessionError(String::new()),

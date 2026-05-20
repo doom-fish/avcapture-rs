@@ -726,9 +726,8 @@ mod tests {
     use apple_cf::cm::CMTime;
 
     use super::{
-        CaptureTimecode, CaptureTimecodeGenerator,
-        CaptureTimecodeGeneratorSynchronizationStatus, CaptureTimecodeSourceInfo,
-        CaptureTimecodeSourceType,
+        CaptureTimecode, CaptureTimecodeGenerator, CaptureTimecodeGeneratorSynchronizationStatus,
+        CaptureTimecodeSourceInfo, CaptureTimecodeSourceType,
     };
     use crate::error::AVCaptureError;
 
@@ -750,7 +749,10 @@ mod tests {
         assert_eq!(CaptureTimecodeSourceType::External.as_raw(), "external");
 
         let custom = CaptureTimecodeSourceType::from_raw("customSource");
-        assert_eq!(custom, CaptureTimecodeSourceType::Unknown("customSource".to_owned()));
+        assert_eq!(
+            custom,
+            CaptureTimecodeSourceType::Unknown("customSource".to_owned())
+        );
         assert_eq!(custom.as_raw(), "customSource");
     }
 
@@ -786,7 +788,10 @@ mod tests {
         assert_eq!(timecode.frames, 4);
         assert_eq!(timecode.user_bits, 0xAABB_CCDD);
         assert_eq!(timecode.frame_duration, frame_duration);
-        assert_eq!(timecode.source_type, CaptureTimecodeSourceType::RealTimeClock);
+        assert_eq!(
+            timecode.source_type,
+            CaptureTimecodeSourceType::RealTimeClock
+        );
         assert_eq!(timecode.source_type_raw(), "realTimeClock");
     }
 
@@ -846,7 +851,9 @@ mod tests {
 
     #[test]
     fn generator_validation_rejects_invalid_numeric_inputs() {
-        let generator = CaptureTimecodeGenerator { ptr: ptr::null_mut() };
+        let generator = CaptureTimecodeGenerator {
+            ptr: ptr::null_mut(),
+        };
 
         assert!(matches!(
             generator.set_synchronization_timeout(-0.1),

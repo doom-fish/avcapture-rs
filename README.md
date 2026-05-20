@@ -2,9 +2,9 @@
 
 Safe Rust bindings for Apple's `AVCapture` stack on macOS.
 
-## 0.3.0 highlights
+## 0.5.0 highlights
 
-- Added the `async` feature with executor-agnostic `BoundedAsyncStream<T>` wrappers for session state, sample buffers, file-recording lifecycle, and metadata objects.
+- Added the `async` feature's photo-capture futures plus executor-agnostic `BoundedAsyncStream<T>` wrappers for session state, sample buffers, movie/audio file-recording lifecycle, file-output sample-buffer boundaries, photo readiness, and metadata objects.
 - `AVCaptureDevice` now covers focus / white-balance / autofocus / color-space state, torch-level constants, input sources, rotation coordinators, Center Stage / microphone modes, reactions, and related notification constants.
 - Added `AVCaptureAudioPreviewOutput`, `AVCaptureAudioFileOutput`, `AVCaptureAudioChannel`, typed dropped-sample reasons, and base file-output sample-buffer-boundary callbacks.
 - Added `AVCapturePhotoOutputReadinessCoordinator`, `ResolvedPhotoSettings`, session controls / deferred-start delegates, Desk View / external-display helpers, and the `AVCaptureTimecode*` family.
@@ -19,15 +19,15 @@ See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
 cargo add avcapture
 ```
 
-Enable executor-agnostic async streams with:
+Enable executor-agnostic async future/stream adapters with:
 
 ```bash
 cargo add avcapture --features async
 ```
 
-## Async streams
+## Async API
 
-The `async` feature adds `avcapture::async_api`, which exposes `BoundedAsyncStream<T>` wrappers for session running/error/interruption state, video/audio sample buffers, movie file recording lifecycle events, and metadata-object delivery.
+The `async` feature adds `avcapture::async_api`, which exposes runtime-agnostic `Future` wrappers for photo capture plus `BoundedAsyncStream<T>` adapters for session running/error/interruption state, video/audio sample buffers, movie/audio file recording lifecycle events, movie/audio file-output sample-buffer boundary callbacks, photo readiness, and metadata-object delivery.
 
 ## Example
 

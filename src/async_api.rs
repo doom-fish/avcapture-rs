@@ -8,11 +8,15 @@
 
 use apple_cf::cm::CMSampleBuffer;
 use apple_cf::cv::CVPixelBuffer;
+use doom_fish_utils::completion::{AsyncCompletion, AsyncCompletionFuture};
 use doom_fish_utils::stream::{AsyncStreamSender, BoundedAsyncStream};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use crate::error::{from_swift, AVCaptureError};
 use crate::helpers::cstring;
@@ -74,6 +78,16 @@ pub struct VideoSampleBufferEvent {
 #[derive(Debug, Clone)]
 /// Event payload derived from `AVCaptureAudioDataOutputSampleBufferDelegate` callbacks.
 pub struct AudioSampleBufferEvent {
+    /// The retained `CMSampleBuffer` delivered by the callback.
+    pub sample_buffer: CMSampleBuffer,
+}
+
+/// A file-output sample-buffer boundary event delivered from `AVCaptureFileOutputDelegate`.
+///
+/// `Clone` is a **reference-count increment** (`CFRetain`) on the underlying
+/// `CMSampleBufferRef` — it does **not** copy sample data.
+#[derive(Debug, Clone)]
+pub struct FileOutputSampleBufferEvent {
     /// The retained `CMSampleBuffer` delivered by the callback.
     pub sample_buffer: CMSampleBuffer,
 }
@@ -145,6 +159,116 @@ impl From<MetadataObjectPayload> for MetadataObject {
             string_value: value.string_value,
             bounds: value.bounds,
         }
+    }
+}
+
+const fn capture_bridge_err(msg: String) -> AVCaptureError {
+    AVCaptureError::OperationFailed(msg)
+}
+
+/// Future returned by [`PhotoCaptureEventFuture::start`] and
+/// [`PhotoCaptureEventFuture::start_with_settings`].
+pub struct PhotoCaptureEventFuture {
+    inner: AsyncCompletionFuture<crate::PhotoCaptureEvent>,
+}
+
+impl std::fmt::Debug for PhotoCaptureEventFuture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PhotoCaptureEventFuture")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PhotoCaptureEventFuture {
+    /// Starts a default-settings `AVCapturePhotoOutput` capture and resolves to
+    /// the detailed final capture event.
+    pub fn start(output: &crate::PhotoOutput) -> Result<Self, AVCaptureError> {
+        let settings = crate::PhotoSettings::new()?;
+        Self::start_with_settings(output, &settings)
+    }
+
+    /// Starts a capture with caller-provided settings and resolves to the
+    /// detailed final capture event.
+    pub fn start_with_settings(
+        output: &crate::PhotoOutput,
+        settings: &crate::PhotoSettings,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = AsyncCompletion::create();
+        let ctx = ctx as usize;
+        output.capture_photo_with_settings(settings, move |event| unsafe {
+            AsyncCompletion::complete_ok(ctx as *mut c_void, event);
+        })?;
+        Ok(Self { inner })
+    }
+}
+
+impl Future for PhotoCaptureEventFuture {
+    type Output = Result<crate::PhotoCaptureEvent, AVCaptureError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.inner)
+            .poll(cx)
+            .map(|result| result.map_err(capture_bridge_err))
+    }
+}
+
+/// Future returned by [`PhotoCaptureResultFuture::start`] and
+/// [`PhotoCaptureResultFuture::start_with_settings`].
+pub struct PhotoCaptureResultFuture {
+    inner: AsyncCompletionFuture<crate::PhotoCaptureResult>,
+}
+
+impl std::fmt::Debug for PhotoCaptureResultFuture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PhotoCaptureResultFuture")
+            .finish_non_exhaustive()
+    }
+}
+
+impl PhotoCaptureResultFuture {
+    /// Starts a default-settings `AVCapturePhotoOutput` capture and resolves to
+    /// the final success result.
+    pub fn start(output: &crate::PhotoOutput) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = AsyncCompletion::create();
+        let ctx = ctx as usize;
+        output.capture_photo(move |result| unsafe {
+            AsyncCompletion::complete_ok(ctx as *mut c_void, result);
+        })?;
+        Ok(Self { inner })
+    }
+
+    /// Starts a capture with caller-provided settings and resolves to the final
+    /// success result.
+    pub fn start_with_settings(
+        output: &crate::PhotoOutput,
+        settings: &crate::PhotoSettings,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = AsyncCompletion::create();
+        let ctx = ctx as usize;
+        output.capture_photo_with_settings(settings, move |event| unsafe {
+            AsyncCompletion::complete_ok(
+                ctx as *mut c_void,
+                crate::PhotoCaptureResult {
+                    unique_id: event.unique_id,
+                    error: event.error,
+                },
+            );
+        })?;
+        Ok(Self { inner })
+    }
+}
+
+impl Future for PhotoCaptureResultFuture {
+    type Output = Result<crate::PhotoCaptureResult, AVCaptureError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.inner).poll(cx).map(|result| {
+            let result = result.map_err(capture_bridge_err)?;
+            if let Some(error) = result.error.clone() {
+                return Err(AVCaptureError::OperationFailed(error));
+            }
+            Ok(result)
+        })
     }
 }
 
@@ -314,6 +438,21 @@ unsafe fn stop_file_recording(handle: *mut c_void) {
     ffi::async_stream::avcapture_file_recording_stream_stop(handle);
 }
 
+unsafe fn stop_audio_file_recording(handle: *mut c_void) {
+    // SAFETY: same contract as `unsubscribe_session_running`.
+    ffi::async_stream::avcapture_audio_file_recording_stream_stop(handle);
+}
+
+unsafe fn unsubscribe_movie_file_boundary(handle: *mut c_void) {
+    // SAFETY: same contract as `unsubscribe_session_running`.
+    ffi::async_stream::avcapture_movie_file_boundary_unsubscribe(handle);
+}
+
+unsafe fn unsubscribe_audio_file_boundary(handle: *mut c_void) {
+    // SAFETY: same contract as `unsubscribe_session_running`.
+    ffi::async_stream::avcapture_audio_file_boundary_unsubscribe(handle);
+}
+
 unsafe fn unsubscribe_metadata_objects(handle: *mut c_void) {
     // SAFETY: same contract as `unsubscribe_session_running`.
     ffi::async_stream::avcapture_metadata_objects_unsubscribe(handle);
@@ -422,6 +561,21 @@ unsafe extern "C" fn audio_sample_cb(ctx: *mut c_void, sample_buffer: *mut c_voi
         return;
     };
     sender.push(AudioSampleBufferEvent { sample_buffer });
+}
+
+/// # Safety
+/// Same as `audio_sample_cb`, but used for file-output sample-buffer boundary
+/// delivery.
+unsafe extern "C" fn file_output_sample_buffer_cb(ctx: *mut c_void, sample_buffer: *mut c_void) {
+    let sample = CMSampleBuffer::from_raw(sample_buffer);
+    let Some(sender) = sender_from_ctx::<FileOutputSampleBufferEvent>(ctx) else {
+        drop(sample);
+        return;
+    };
+    let Some(sample_buffer) = sample else {
+        return;
+    };
+    sender.push(FileOutputSampleBufferEvent { sample_buffer });
 }
 
 /// # Safety
@@ -674,6 +828,157 @@ impl FileRecordingStream {
 }
 
 impl_stream_common!(FileRecordingStream, FileRecordingStreamEvent);
+
+#[derive(Debug)]
+/// Async stream of events sourced from `AVCaptureAudioFileOutput`.
+pub struct AudioFileRecordingStream {
+    _handle: StreamHandle,
+    _sender_box: SenderBox<FileRecordingStreamEvent>,
+    inner: BoundedAsyncStream<FileRecordingStreamEvent>,
+}
+
+impl AudioFileRecordingStream {
+    /// Starts `AVCaptureAudioFileOutput` event delivery and returns an async stream.
+    pub fn start(
+        output: &crate::AudioFileOutput,
+        path: &Path,
+        output_file_type: &str,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, sender_box, ctx) = stream_parts(capacity);
+        let path = cstring(&path.to_string_lossy(), "audio file output path")?;
+        let output_file_type = cstring(output_file_type, "audio file output type")?;
+        let mut err: *mut c_char = std::ptr::null_mut();
+        let handle_ptr = unsafe {
+            ffi::async_stream::avcapture_audio_file_recording_stream_start(
+                output.ptr,
+                path.as_ptr(),
+                output_file_type.as_ptr(),
+                Some(file_recording_cb),
+                ctx,
+                &mut err,
+            )
+        };
+        if handle_ptr.is_null() {
+            return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
+        }
+        Ok(Self {
+            _handle: StreamHandle::new(handle_ptr, stop_audio_file_recording),
+            _sender_box: sender_box,
+            inner,
+        })
+    }
+}
+
+impl_stream_common!(AudioFileRecordingStream, FileRecordingStreamEvent);
+
+#[derive(Debug)]
+/// Async stream of file-output sample-buffer boundary events sourced from `AVCaptureMovieFileOutput`.
+pub struct MovieFileSampleBufferBoundaryStream {
+    _handle: StreamHandle,
+    _sender_box: SenderBox<FileOutputSampleBufferEvent>,
+    inner: BoundedAsyncStream<FileOutputSampleBufferEvent>,
+}
+
+impl MovieFileSampleBufferBoundaryStream {
+    /// Subscribes to `AVCaptureMovieFileOutput` sample-buffer boundary callbacks.
+    pub fn subscribe(output: &crate::MovieFileOutput, capacity: usize) -> Self {
+        let (inner, sender_box, ctx) = stream_parts(capacity);
+        let handle_ptr = unsafe {
+            ffi::async_stream::avcapture_movie_file_boundary_subscribe(
+                output.ptr,
+                Some(file_output_sample_buffer_cb),
+                ctx,
+            )
+        };
+        assert!(
+            !handle_ptr.is_null(),
+            "movie file boundary stream subscribe failed"
+        );
+        Self {
+            _handle: StreamHandle::new(handle_ptr, unsubscribe_movie_file_boundary),
+            _sender_box: sender_box,
+            inner,
+        }
+    }
+}
+
+impl_stream_common!(
+    MovieFileSampleBufferBoundaryStream,
+    FileOutputSampleBufferEvent
+);
+
+#[derive(Debug)]
+/// Async stream of file-output sample-buffer boundary events sourced from `AVCaptureAudioFileOutput`.
+pub struct AudioFileSampleBufferBoundaryStream {
+    _handle: StreamHandle,
+    _sender_box: SenderBox<FileOutputSampleBufferEvent>,
+    inner: BoundedAsyncStream<FileOutputSampleBufferEvent>,
+}
+
+impl AudioFileSampleBufferBoundaryStream {
+    /// Subscribes to `AVCaptureAudioFileOutput` sample-buffer boundary callbacks.
+    pub fn subscribe(output: &crate::AudioFileOutput, capacity: usize) -> Self {
+        let (inner, sender_box, ctx) = stream_parts(capacity);
+        let handle_ptr = unsafe {
+            ffi::async_stream::avcapture_audio_file_boundary_subscribe(
+                output.ptr,
+                Some(file_output_sample_buffer_cb),
+                ctx,
+            )
+        };
+        assert!(
+            !handle_ptr.is_null(),
+            "audio file boundary stream subscribe failed"
+        );
+        Self {
+            _handle: StreamHandle::new(handle_ptr, unsubscribe_audio_file_boundary),
+            _sender_box: sender_box,
+            inner,
+        }
+    }
+}
+
+impl_stream_common!(
+    AudioFileSampleBufferBoundaryStream,
+    FileOutputSampleBufferEvent
+);
+
+#[derive(Debug)]
+/// Async stream of readiness changes sourced from `AVCapturePhotoOutputReadinessCoordinator`.
+pub struct PhotoCaptureReadinessStream {
+    coordinator: crate::PhotoOutputReadinessCoordinator,
+    inner: BoundedAsyncStream<crate::PhotoOutputCaptureReadiness>,
+}
+
+impl PhotoCaptureReadinessStream {
+    /// Starts readiness observation from an owned readiness coordinator.
+    pub fn from_coordinator(
+        coordinator: crate::PhotoOutputReadinessCoordinator,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, sender) = BoundedAsyncStream::new(capacity);
+        coordinator.set_capture_readiness_handler(move |readiness| {
+            sender.push(readiness);
+        })?;
+        Ok(Self { coordinator, inner })
+    }
+
+    /// Creates a readiness coordinator from the output and starts async observation.
+    pub fn subscribe(output: &crate::PhotoOutput, capacity: usize) -> Result<Self, AVCaptureError> {
+        Self::from_coordinator(output.readiness_coordinator()?, capacity)
+    }
+
+    /// Returns the owned readiness coordinator backing this stream.
+    pub const fn coordinator(&self) -> &crate::PhotoOutputReadinessCoordinator {
+        &self.coordinator
+    }
+}
+
+impl_stream_common!(
+    PhotoCaptureReadinessStream,
+    crate::PhotoOutputCaptureReadiness
+);
 
 #[derive(Debug)]
 /// Async stream of events sourced from `AVCaptureMetadataOutput`.

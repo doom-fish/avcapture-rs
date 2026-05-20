@@ -336,3 +336,8 @@ impl Photo {
         Ok(ResolvedPhotoSettings::from_raw(ptr))
     }
 }
+
+// SAFETY: AVCapture photo wrappers are opaque retained objects that may be
+// moved across thread boundaries for async capture delivery.
+unsafe impl Send for ResolvedPhotoSettings {}
+unsafe impl Send for Photo {}

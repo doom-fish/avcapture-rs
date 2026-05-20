@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0] - 2026-05-20
+
+### Added
+
+- `async_api` photo capture futures, photo-readiness streaming, audio file recording lifecycle streaming, and movie/audio file-output sample-buffer boundary streams.
+- Async API coverage for the new photo and file-output wrappers.
+
+### Notes
+
+- Phase 32 completeness + async sweep.
+
 ## [0.4.10] - 2026-05-20
 
 - Added in-`src/` unit tests across `camera_calibration_data`, `device`, `error`, and `video_data_output_timecode` (Tier 2 quality polish), providing fast `cargo test --lib` fail-fast signal alongside the existing integration tests under `tests/`.

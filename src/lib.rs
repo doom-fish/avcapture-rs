@@ -3,7 +3,7 @@
 
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
-/// Async stream adapters for `AVCapture*` notifications and delegate callbacks.
+/// Async future/stream adapters for `AVCapture*` completion handlers, notifications, and delegate callbacks.
 pub mod async_api;
 mod audio_data_output;
 mod camera_calibration_data;

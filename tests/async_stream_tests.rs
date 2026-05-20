@@ -10,6 +10,12 @@ mod async_stream {
 
     const fn assert_next_item<T>(_: doom_fish_utils::stream::NextItem<'_, T>) {}
 
+    fn assert_future_result<T, U>(_: T)
+    where
+        T: std::future::Future<Output = Result<U, avcapture::AVCaptureError>>,
+    {
+    }
+
     fn check_session_running_stream_api(session: &avcapture::CaptureSession) {
         let s = SessionRunningStream::subscribe(session, 8);
         let _ = s.buffered_count();
@@ -56,6 +62,33 @@ mod async_stream {
         let _ = s.try_next();
         assert_next_item(s.next());
         let _ = s.is_closed();
+    }
+
+    fn check_photo_capture_future_api(
+        output: &avcapture::PhotoOutput,
+    ) -> Result<(), avcapture::AVCaptureError> {
+        let settings = avcapture::PhotoSettings::new()?;
+        if let Ok(future) = PhotoCaptureResultFuture::start(output) {
+            assert_future_result(future);
+        }
+        if let Ok(future) = PhotoCaptureResultFuture::start_with_settings(output, &settings) {
+            assert_future_result(future);
+        }
+        if let Ok(future) = PhotoCaptureEventFuture::start(output) {
+            assert_future_result(future);
+        }
+        if let Ok(future) = PhotoCaptureEventFuture::start_with_settings(output, &settings) {
+            assert_future_result(future);
+        }
+        Ok(())
+    }
+
+    fn check_photo_readiness_stream_api(stream: &PhotoCaptureReadinessStream) {
+        let _ = stream.coordinator();
+        let _ = stream.buffered_count();
+        let _ = stream.try_next();
+        assert_next_item(stream.next());
+        let _ = stream.is_closed();
     }
 
     #[test]
@@ -124,6 +157,88 @@ mod async_stream {
             avcapture::AVCaptureError::OutputError(_)
                 | avcapture::AVCaptureError::OperationFailed(_)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn audio_file_recording_stream_requires_attached_output(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = avcapture::AudioFileOutput::new()?;
+        let artifact_dir = std::env::current_dir()?
+            .join("target")
+            .join("test-artifacts");
+        fs::create_dir_all(&artifact_dir)?;
+        let artifact_path = artifact_dir.join("async-audio-file-recording-stream.caf");
+        let output_type = output
+            .available_output_file_types()?
+            .into_iter()
+            .next()
+            .ok_or("expected an available audio output type")?;
+        let Err(err) = AudioFileRecordingStream::start(&output, &artifact_path, &output_type, 8)
+        else {
+            panic!("disconnected audio output should refuse recording requests");
+        };
+        assert!(matches!(
+            err,
+            avcapture::AVCaptureError::OutputError(_)
+                | avcapture::AVCaptureError::OperationFailed(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn file_output_boundary_streams_compile_and_drop() -> Result<(), Box<dyn std::error::Error>> {
+        let movie = avcapture::MovieFileOutput::new()?;
+        let audio = avcapture::AudioFileOutput::new()?;
+
+        let movie_stream = MovieFileSampleBufferBoundaryStream::subscribe(&movie, 8);
+        let _ = movie_stream.buffered_count();
+        let _ = movie_stream.try_next();
+        assert_next_item(movie_stream.next());
+        assert!(!movie_stream.is_closed());
+        drop(movie_stream);
+
+        let audio_stream = AudioFileSampleBufferBoundaryStream::subscribe(&audio, 8);
+        let _ = audio_stream.buffered_count();
+        let _ = audio_stream.try_next();
+        assert_next_item(audio_stream.next());
+        assert!(!audio_stream.is_closed());
+        drop(audio_stream);
+
+        Ok(())
+    }
+
+    #[test]
+    fn photo_async_wrappers_require_attached_output() -> Result<(), Box<dyn std::error::Error>> {
+        let output = avcapture::PhotoOutput::new()?;
+        check_photo_capture_future_api(&output)?;
+
+        let result_future: Result<PhotoCaptureResultFuture, avcapture::AVCaptureError> =
+            PhotoCaptureResultFuture::start(&output);
+        assert!(matches!(
+            result_future,
+            Err(avcapture::AVCaptureError::OutputError(_)
+                | avcapture::AVCaptureError::OperationFailed(_))
+        ));
+
+        let settings = avcapture::PhotoSettings::new()?;
+        let event_future: Result<PhotoCaptureEventFuture, avcapture::AVCaptureError> =
+            PhotoCaptureEventFuture::start_with_settings(&output, &settings);
+        assert!(matches!(
+            event_future,
+            Err(avcapture::AVCaptureError::OutputError(_)
+                | avcapture::AVCaptureError::OperationFailed(_))
+        ));
+
+        let readiness_stream: Result<PhotoCaptureReadinessStream, avcapture::AVCaptureError> =
+            PhotoCaptureReadinessStream::subscribe(&output, 8);
+        assert!(matches!(
+            readiness_stream,
+            Err(avcapture::AVCaptureError::OutputError(_)
+                | avcapture::AVCaptureError::OperationFailed(_))
+        ));
+
+        let _: fn(&PhotoCaptureReadinessStream) = check_photo_readiness_stream_api;
         Ok(())
     }
 }

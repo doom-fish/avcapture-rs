@@ -475,6 +475,10 @@ impl PhotoOutputReadinessCoordinator {
     }
 }
 
+// SAFETY: The readiness coordinator is an opaque ARC-managed wrapper that may
+// be sent across thread boundaries for async readiness observation.
+unsafe impl Send for PhotoOutputReadinessCoordinator {}
+
 unsafe extern "C" fn photo_capture_event_trampoline(
     userdata: *mut c_void,
     photo_ptr: *mut c_void,

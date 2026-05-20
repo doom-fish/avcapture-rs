@@ -64,6 +64,26 @@ private func avcPrepareAsyncRecordingURL(_ outputPath: String) throws -> URL {
     return url
 }
 
+private final class AsyncFileOutputBoundaryDelegate: NSObject, AVCaptureFileOutputDelegate {
+    private let onSampleBuffer: (CMSampleBuffer) -> Void
+
+    init(onSampleBuffer: @escaping (CMSampleBuffer) -> Void) {
+        self.onSampleBuffer = onSampleBuffer
+    }
+
+    func fileOutputShouldProvideSampleAccurateRecordingStart(_ output: AVCaptureFileOutput) -> Bool {
+        true
+    }
+
+    func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        onSampleBuffer(sampleBuffer)
+    }
+}
+
 private final class SessionRunningStreamBridge: NSObject {
     private let sessionBox: SessionBox
     private let callback: AVCStreamEventCallback
@@ -344,6 +364,155 @@ private final class FileRecordingStreamBridge: NSObject, AVCaptureFileOutputReco
     }
 }
 
+private final class AudioFileRecordingStreamBridge: NSObject, AVCaptureFileOutputRecordingDelegate {
+    private let outputBox: AudioFileOutputBox
+    private let callback: AVCStreamEventCallback
+    private let ctx: UnsafeMutableRawPointer
+    private var stopped = false
+
+    init(
+        outputBox: AudioFileOutputBox,
+        outputPath: String,
+        outputFileType: String,
+        callback: @escaping AVCStreamEventCallback,
+        ctx: UnsafeMutableRawPointer
+    ) throws {
+        self.outputBox = outputBox
+        self.callback = callback
+        self.ctx = ctx
+        super.init()
+
+        guard !outputBox.audioOutput.isRecording else {
+            throw BridgeError.message("audio file output is already recording")
+        }
+        guard !outputBox.audioOutput.connections.isEmpty else {
+            throw BridgeError.message("audio file output is not attached to a session")
+        }
+
+        let fileType = AVFileType(rawValue: outputFileType)
+        guard AVCaptureAudioFileOutput.availableOutputFileTypes().contains(fileType) else {
+            throw BridgeError.message("unsupported audio file output type: \(outputFileType)")
+        }
+
+        let url = try avcPrepareAsyncRecordingURL(outputPath)
+        outputBox.audioOutput.startRecording(to: url, outputFileType: fileType, recordingDelegate: self)
+    }
+
+    deinit {
+        stop()
+    }
+
+    func stop() {
+        guard !stopped else { return }
+        stopped = true
+        if outputBox.audioOutput.isRecording {
+            outputBox.audioOutput.stopRecording()
+        }
+    }
+
+    private func emit(kind: Int32, fileURL: URL, error: Error?) {
+        avcEmitStreamEvent(
+            callback,
+            kind: kind,
+            payload: FileRecordingStreamPayload(fileUrl: fileURL.path, error: error?.localizedDescription),
+            ctx: ctx
+        )
+    }
+
+    func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didStartRecordingTo fileURL: URL,
+        from connections: [AVCaptureConnection]
+    ) {
+        emit(kind: 0, fileURL: fileURL, error: nil)
+    }
+
+    func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didPauseRecordingTo fileURL: URL,
+        from connections: [AVCaptureConnection]
+    ) {
+        emit(kind: 1, fileURL: fileURL, error: nil)
+    }
+
+    func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didResumeRecordingTo fileURL: URL,
+        from connections: [AVCaptureConnection]
+    ) {
+        emit(kind: 2, fileURL: fileURL, error: nil)
+    }
+
+    func fileOutput(
+        _ output: AVCaptureFileOutput,
+        willFinishRecordingTo outputFileURL: URL,
+        from connections: [AVCaptureConnection],
+        error: Error?
+    ) {
+        emit(kind: 3, fileURL: outputFileURL, error: error)
+    }
+
+    func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didFinishRecordingTo outputFileURL: URL,
+        from connections: [AVCaptureConnection],
+        error: Error?
+    ) {
+        emit(kind: 4, fileURL: outputFileURL, error: error)
+        stopped = true
+    }
+}
+
+private final class MovieFileBoundaryStreamBridge: NSObject {
+    private let outputBox: MovieFileOutputBox
+    private var delegate: AsyncFileOutputBoundaryDelegate?
+
+    init(
+        outputBox: MovieFileOutputBox,
+        callback: @escaping AVCAudioSampleCallback,
+        ctx: UnsafeMutableRawPointer
+    ) {
+        self.outputBox = outputBox
+        super.init()
+        let delegate = AsyncFileOutputBoundaryDelegate { sampleBuffer in
+            let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
+            callback(ctx, sampleOpaque)
+        }
+        self.delegate = delegate
+        outputBox.movieOutput.delegate = delegate
+    }
+
+    deinit {
+        outputBox.movieOutput.delegate = nil
+        delegate = nil
+    }
+}
+
+private final class AudioFileBoundaryStreamBridge: NSObject {
+    private let outputBox: AudioFileOutputBox
+    private var delegate: AsyncFileOutputBoundaryDelegate?
+
+    init(
+        outputBox: AudioFileOutputBox,
+        callback: @escaping AVCAudioSampleCallback,
+        ctx: UnsafeMutableRawPointer
+    ) {
+        self.outputBox = outputBox
+        super.init()
+        let delegate = AsyncFileOutputBoundaryDelegate { sampleBuffer in
+            let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
+            callback(ctx, sampleOpaque)
+        }
+        self.delegate = delegate
+        outputBox.audioOutput.delegate = delegate
+    }
+
+    deinit {
+        outputBox.audioOutput.delegate = nil
+        delegate = nil
+    }
+}
+
 @available(macOS 13.0, *)
 private final class MetadataObjectsStreamBridge: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     private let outputBox: MetadataOutputBox
@@ -501,6 +670,77 @@ public func avcapture_file_recording_stream_stop(_ handle: UnsafeMutableRawPoint
     let bridge = avcUnretained(handle, as: FileRecordingStreamBridge.self)
     bridge.stop()
     avcRelease(handle, as: FileRecordingStreamBridge.self)
+}
+
+@_cdecl("avcapture_audio_file_recording_stream_start")
+public func avcapture_audio_file_recording_stream_start(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ pathPtr: UnsafePointer<CChar>,
+    _ outputFileTypePtr: UnsafePointer<CChar>,
+    _ onEvent: AVCStreamEventCallback?,
+    _ ctx: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutableRawPointer? {
+    guard let onEvent else {
+        outErrorMessage?.pointee = ffiString("missing audio file recording callback")
+        return nil
+    }
+    let outputBox = avcUnretained(outputPtr, as: AudioFileOutputBox.self)
+    do {
+        let bridge = try AudioFileRecordingStreamBridge(
+            outputBox: outputBox,
+            outputPath: String(cString: pathPtr),
+            outputFileType: String(cString: outputFileTypePtr),
+            callback: onEvent,
+            ctx: ctx
+        )
+        return avcRetain(bridge)
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return nil
+    }
+}
+
+@_cdecl("avcapture_audio_file_recording_stream_stop")
+public func avcapture_audio_file_recording_stream_stop(_ handle: UnsafeMutableRawPointer?) {
+    guard let handle else { return }
+    let bridge = avcUnretained(handle, as: AudioFileRecordingStreamBridge.self)
+    bridge.stop()
+    avcRelease(handle, as: AudioFileRecordingStreamBridge.self)
+}
+
+@_cdecl("avcapture_movie_file_boundary_subscribe")
+public func avcapture_movie_file_boundary_subscribe(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ onEvent: AVCAudioSampleCallback?,
+    _ ctx: UnsafeMutableRawPointer
+) -> UnsafeMutableRawPointer? {
+    guard let onEvent else { return nil }
+    av_capture_movie_file_output_clear_sample_buffer_boundary_callback(outputPtr)
+    let outputBox = avcUnretained(outputPtr, as: MovieFileOutputBox.self)
+    return avcRetain(MovieFileBoundaryStreamBridge(outputBox: outputBox, callback: onEvent, ctx: ctx))
+}
+
+@_cdecl("avcapture_movie_file_boundary_unsubscribe")
+public func avcapture_movie_file_boundary_unsubscribe(_ handle: UnsafeMutableRawPointer?) {
+    avcRelease(handle, as: MovieFileBoundaryStreamBridge.self)
+}
+
+@_cdecl("avcapture_audio_file_boundary_subscribe")
+public func avcapture_audio_file_boundary_subscribe(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ onEvent: AVCAudioSampleCallback?,
+    _ ctx: UnsafeMutableRawPointer
+) -> UnsafeMutableRawPointer? {
+    guard let onEvent else { return nil }
+    av_capture_audio_file_output_clear_sample_buffer_boundary_callback(outputPtr)
+    let outputBox = avcUnretained(outputPtr, as: AudioFileOutputBox.self)
+    return avcRetain(AudioFileBoundaryStreamBridge(outputBox: outputBox, callback: onEvent, ctx: ctx))
+}
+
+@_cdecl("avcapture_audio_file_boundary_unsubscribe")
+public func avcapture_audio_file_boundary_unsubscribe(_ handle: UnsafeMutableRawPointer?) {
+    avcRelease(handle, as: AudioFileBoundaryStreamBridge.self)
 }
 
 @available(macOS 13.0, *)
