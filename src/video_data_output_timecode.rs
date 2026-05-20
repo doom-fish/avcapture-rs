@@ -718,3 +718,150 @@ unsafe extern "C" fn timecode_delegate_drop(userdata: *mut c_void) {
         userdata.cast::<TimecodeDelegateCallbackState>(),
     ));
 }
+
+#[cfg(test)]
+mod tests {
+    use core::ptr;
+
+    use apple_cf::cm::CMTime;
+
+    use super::{
+        CaptureTimecode, CaptureTimecodeGenerator,
+        CaptureTimecodeGeneratorSynchronizationStatus, CaptureTimecodeSourceInfo,
+        CaptureTimecodeSourceType,
+    };
+    use crate::error::AVCaptureError;
+
+    fn sample_frame_duration() -> CMTime {
+        CMTime {
+            value: 1001,
+            timescale: 30_000,
+            flags: 1,
+            epoch: 0,
+        }
+    }
+
+    #[test]
+    fn source_type_round_trips_known_and_unknown_values() {
+        assert_eq!(
+            CaptureTimecodeSourceType::from_raw("frameCount"),
+            CaptureTimecodeSourceType::FrameCount
+        );
+        assert_eq!(CaptureTimecodeSourceType::External.as_raw(), "external");
+
+        let custom = CaptureTimecodeSourceType::from_raw("customSource");
+        assert_eq!(custom, CaptureTimecodeSourceType::Unknown("customSource".to_owned()));
+        assert_eq!(custom.as_raw(), "customSource");
+    }
+
+    #[test]
+    fn synchronization_status_round_trips_known_and_unknown_values() {
+        assert_eq!(
+            CaptureTimecodeGeneratorSynchronizationStatus::from_raw("synchronized"),
+            CaptureTimecodeGeneratorSynchronizationStatus::Synchronized
+        );
+        assert_eq!(
+            CaptureTimecodeGeneratorSynchronizationStatus::TimedOut.as_raw(),
+            "timedOut"
+        );
+
+        let custom = CaptureTimecodeGeneratorSynchronizationStatus::from_raw("delayed");
+        assert_eq!(
+            custom,
+            CaptureTimecodeGeneratorSynchronizationStatus::UnknownValue("delayed".to_owned())
+        );
+        assert_eq!(custom.as_raw(), "delayed");
+    }
+
+    #[test]
+    fn timecode_new_preserves_frame_duration_and_source_type() {
+        let frame_duration = sample_frame_duration();
+        let timecode =
+            CaptureTimecode::new(1, 2, 3, 4, 0xAABB_CCDD, frame_duration, "realTimeClock")
+                .expect("valid timecode should build");
+
+        assert_eq!(timecode.hours, 1);
+        assert_eq!(timecode.minutes, 2);
+        assert_eq!(timecode.seconds, 3);
+        assert_eq!(timecode.frames, 4);
+        assert_eq!(timecode.user_bits, 0xAABB_CCDD);
+        assert_eq!(timecode.frame_duration, frame_duration);
+        assert_eq!(timecode.source_type, CaptureTimecodeSourceType::RealTimeClock);
+        assert_eq!(timecode.source_type_raw(), "realTimeClock");
+    }
+
+    #[test]
+    fn timecode_new_rejects_invalid_clock_fields() {
+        assert!(matches!(
+            CaptureTimecode::new(24, 0, 0, 0, 0, sample_frame_duration(), "frameCount"),
+            Err(AVCaptureError::InvalidArgument(message))
+                if message == "timecode hours must be less than 24"
+        ));
+        assert!(matches!(
+            CaptureTimecode::new(0, 60, 0, 0, 0, sample_frame_duration(), "frameCount"),
+            Err(AVCaptureError::InvalidArgument(message))
+                if message == "timecode minutes must be less than 60"
+        ));
+        assert!(matches!(
+            CaptureTimecode::new(0, 0, 60, 0, 0, sample_frame_duration(), "frameCount"),
+            Err(AVCaptureError::InvalidArgument(message))
+                if message == "timecode seconds must be less than 60"
+        ));
+    }
+
+    #[test]
+    fn timecode_deserialization_preserves_frame_duration() {
+        let timecode: CaptureTimecode = serde_json::from_str(
+            r#"{
+                "hours": 5,
+                "minutes": 6,
+                "seconds": 7,
+                "frames": 8,
+                "userBits": 9,
+                "frameDuration": {
+                    "value": 1001,
+                    "timescale": 30000,
+                    "flags": 1,
+                    "epoch": 0
+                },
+                "sourceType": "external"
+            }"#,
+        )
+        .expect("timecode JSON should decode");
+
+        assert_eq!(timecode.frame_duration, sample_frame_duration());
+        assert_eq!(timecode.source_type, CaptureTimecodeSourceType::External);
+    }
+
+    #[test]
+    fn source_info_exposes_raw_source_type() {
+        let info = CaptureTimecodeSourceInfo {
+            display_name: "Frame Count".to_owned(),
+            source_type: CaptureTimecodeSourceType::FrameCount,
+            uuid: "test-uuid".to_owned(),
+        };
+
+        assert_eq!(info.source_type_raw(), "frameCount");
+    }
+
+    #[test]
+    fn generator_validation_rejects_invalid_numeric_inputs() {
+        let generator = CaptureTimecodeGenerator { ptr: ptr::null_mut() };
+
+        assert!(matches!(
+            generator.set_synchronization_timeout(-0.1),
+            Err(AVCaptureError::InvalidArgument(message))
+                if message == "timecode synchronization timeout must be finite and non-negative"
+        ));
+        assert!(matches!(
+            generator.set_synchronization_timeout(f64::INFINITY),
+            Err(AVCaptureError::InvalidArgument(message))
+                if message == "timecode synchronization timeout must be finite and non-negative"
+        ));
+        assert!(matches!(
+            generator.set_timecode_alignment_offset(f64::NAN),
+            Err(AVCaptureError::InvalidArgument(message))
+                if message == "timecode alignment offset must be finite"
+        ));
+    }
+}

@@ -1824,3 +1824,129 @@ fn validate_normalized_point(point: (f64, f64)) -> Result<(f64, f64), AVCaptureE
     }
     Ok(point)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        option_bool_from_raw, validate_normalized_point, CaptureCameraLensSmudgeDetectionStatus,
+        CaptureDeviceType, CaptureExposureMode, CaptureFocusMode, CaptureMicrophoneMode,
+        CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions, MediaType,
+    };
+    use crate::error::AVCaptureError;
+
+    #[test]
+    fn media_type_round_trips_known_and_unknown_values() {
+        assert_eq!(MediaType::Audio.as_raw(), "audio");
+        assert_eq!(MediaType::from_raw("audio"), MediaType::Audio);
+        assert_eq!(MediaType::Video.as_raw(), "video");
+        assert_eq!(MediaType::from_raw("video"), MediaType::Video);
+        assert_eq!(MediaType::from_raw("muxed"), MediaType::Muxed);
+        assert_eq!(MediaType::from_raw("metadata"), MediaType::Metadata);
+
+        let custom = MediaType::from_raw("depth");
+        assert_eq!(custom, MediaType::Unknown("depth".to_owned()));
+        assert_eq!(custom.as_raw(), "depth");
+    }
+
+    #[test]
+    fn capture_device_type_aliases_map_to_stable_variants() {
+        assert_eq!(
+            CaptureDeviceType::from_raw("AVCaptureDeviceTypeExternalUnknown"),
+            CaptureDeviceType::External
+        );
+        assert_eq!(
+            CaptureDeviceType::from_raw("AVCaptureDeviceTypeBuiltInMicrophone"),
+            CaptureDeviceType::Microphone
+        );
+        assert_eq!(
+            CaptureDeviceType::from_raw("AVCaptureDeviceTypeDeskViewCamera").as_raw(),
+            "AVCaptureDeviceTypeDeskViewCamera"
+        );
+    }
+
+    #[test]
+    fn capture_mode_enums_round_trip_raw_values() {
+        assert_eq!(
+            CaptureExposureMode::from_raw(CaptureExposureMode::Custom.as_raw()),
+            CaptureExposureMode::Custom
+        );
+        assert_eq!(
+            CaptureFocusMode::from_raw(CaptureFocusMode::ContinuousAutoFocus.as_raw()),
+            CaptureFocusMode::ContinuousAutoFocus
+        );
+        assert_eq!(
+            CaptureMicrophoneMode::from_raw(CaptureMicrophoneMode::VoiceIsolation.as_raw()),
+            CaptureMicrophoneMode::VoiceIsolation
+        );
+        assert_eq!(
+            CaptureMicrophoneMode::from_raw(99),
+            CaptureMicrophoneMode::Unknown(99)
+        );
+    }
+
+    #[test]
+    fn lens_smudge_status_round_trips_unknown_values() {
+        let status = CaptureCameraLensSmudgeDetectionStatus::from_raw(77);
+
+        assert_eq!(status, CaptureCameraLensSmudgeDetectionStatus::Unknown(77));
+        assert_eq!(status.as_raw(), 77);
+    }
+
+    #[test]
+    fn restricted_switching_conditions_support_default_and_bit_ops() {
+        let mut conditions =
+            CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions::default();
+        assert_eq!(conditions.as_raw(), 0);
+
+        conditions |= CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions::VIDEO_ZOOM_CHANGED;
+        conditions |= CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions::FOCUS_MODE_CHANGED;
+
+        assert!(conditions.contains(
+            CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions::VIDEO_ZOOM_CHANGED
+        ));
+        assert!(conditions.contains(
+            CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions::FOCUS_MODE_CHANGED
+        ));
+        assert!(!conditions.contains(
+            CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions::EXPOSURE_MODE_CHANGED
+        ));
+
+        let masked =
+            conditions & CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions::FOCUS_MODE_CHANGED;
+        assert_eq!(
+            masked.as_raw(),
+            CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions::FOCUS_MODE_CHANGED
+                .as_raw()
+        );
+    }
+
+    #[test]
+    fn option_bool_from_raw_maps_tristate_values() {
+        assert_eq!(option_bool_from_raw(0), Some(false));
+        assert_eq!(option_bool_from_raw(1), Some(true));
+        assert_eq!(option_bool_from_raw(2), None);
+    }
+
+    #[test]
+    fn validate_normalized_point_rejects_non_finite_coordinates() {
+        let error = validate_normalized_point((f64::NAN, 0.5)).expect_err("NaN must fail");
+
+        assert_eq!(
+            error,
+            AVCaptureError::InvalidArgument("point coordinates must be finite".to_owned())
+        );
+    }
+
+    #[test]
+    fn validate_normalized_point_rejects_out_of_range_coordinates() {
+        let error = validate_normalized_point((1.25, 0.5)).expect_err("out-of-range x must fail");
+
+        assert_eq!(
+            error,
+            AVCaptureError::InvalidArgument(
+                "point coordinates must be normalized between 0.0 and 1.0".to_owned(),
+            )
+        );
+        assert_eq!(validate_normalized_point((0.0, 1.0)).unwrap(), (0.0, 1.0));
+    }
+}

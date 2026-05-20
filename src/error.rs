@@ -68,3 +68,84 @@ pub unsafe fn from_swift(status: i32, error_str: *mut core::ffi::c_char) -> AVCa
         _ => AVCaptureError::OperationFailed(format!("unknown status {status}: {message}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{from_swift, AVCaptureError};
+    use crate::ffi;
+
+    #[test]
+    fn display_formats_each_error_variant_with_expected_prefix() {
+        assert_eq!(
+            AVCaptureError::InvalidArgument("bad value".to_owned()).to_string(),
+            "invalid argument: bad value"
+        );
+        assert_eq!(
+            AVCaptureError::DeviceError("offline".to_owned()).to_string(),
+            "capture device error: offline"
+        );
+        assert_eq!(
+            AVCaptureError::InputError("missing input".to_owned()).to_string(),
+            "capture input error: missing input"
+        );
+        assert_eq!(
+            AVCaptureError::SessionError("stopped".to_owned()).to_string(),
+            "capture session error: stopped"
+        );
+        assert_eq!(
+            AVCaptureError::OutputError("write failed".to_owned()).to_string(),
+            "capture output error: write failed"
+        );
+        assert_eq!(
+            AVCaptureError::CallbackError("delegate failed".to_owned()).to_string(),
+            "capture callback error: delegate failed"
+        );
+        assert_eq!(
+            AVCaptureError::OperationFailed("bridge failed".to_owned()).to_string(),
+            "operation failed: bridge failed"
+        );
+    }
+
+    #[test]
+    fn from_swift_maps_known_status_codes() {
+        let cases = [
+            (
+                ffi::status::INVALID_ARGUMENT,
+                AVCaptureError::InvalidArgument(String::new()),
+            ),
+            (ffi::status::DEVICE_ERROR, AVCaptureError::DeviceError(String::new())),
+            (ffi::status::INPUT_ERROR, AVCaptureError::InputError(String::new())),
+            (
+                ffi::status::SESSION_ERROR,
+                AVCaptureError::SessionError(String::new()),
+            ),
+            (
+                ffi::status::OUTPUT_ERROR,
+                AVCaptureError::OutputError(String::new()),
+            ),
+            (
+                ffi::status::CALLBACK_ERROR,
+                AVCaptureError::CallbackError(String::new()),
+            ),
+            (
+                ffi::status::OPERATION_FAILED,
+                AVCaptureError::OperationFailed(String::new()),
+            ),
+        ];
+
+        for (status, expected) in cases {
+            let error = unsafe { from_swift(status, core::ptr::null_mut()) };
+            assert_eq!(error, expected);
+        }
+    }
+
+    #[test]
+    fn from_swift_maps_unknown_status_codes_to_operation_failed() {
+        let error = unsafe { from_swift(-42, core::ptr::null_mut()) };
+
+        assert_eq!(
+            error,
+            AVCaptureError::OperationFailed("unknown status -42: ".to_owned())
+        );
+    }
+}
