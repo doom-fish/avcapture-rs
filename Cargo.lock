@@ -13,10 +13,10 @@ dependencies = [
 
 [[package]]
 name = "avcapture"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "apple-cf",
- "doom-fish-utils 0.3.0",
+ "doom-fish-utils 0.3.1",
  "pollster",
  "serde",
  "serde_json",
@@ -45,7 +45,7 @@ checksum = "075caf2993a45abe1c2e60d8d1514ce43f947fcbcd31de19db0075e80e20c6a7"
 
 [[package]]
 name = "doom-fish-utils"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crossbeam-queue",
  "futures-util",

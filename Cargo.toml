@@ -1,6 +1,6 @@
 [package]
 name = "avcapture"
-version = "0.4.8"
+version = "0.4.9"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/doom-fish/avcapture-rs"
@@ -32,6 +32,9 @@ include = [
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
+# `apple-cf` still pulls `doom-fish-utils` 0.2.x transitively; keep the direct
+# dependency on the current 0.3.x line until that upstream dependency converges.
+multiple-crate-versions = "allow"
 
 [lib]
 name = "avcapture"
