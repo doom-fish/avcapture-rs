@@ -2,6 +2,7 @@
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::ffi::CString;
 
 use apple_cf::cm::CMSampleBuffer;
@@ -103,6 +104,38 @@ pub struct AudioPreviewOutputInfo {
 
 struct AudioCallbackState {
     callback: Box<dyn FnMut(CMSampleBuffer) + Send + 'static>,
+    ref_count: AtomicUsize,
+}
+
+impl AudioCallbackState {
+    /// Increment the reference count.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must point to a valid, live `AudioCallbackState`.
+    unsafe fn retain(ptr: *mut Self) {
+        unsafe { &*ptr }.ref_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Decrement the reference count, freeing the state if it reaches zero.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must point to a valid, live `AudioCallbackState`. After this call,
+    /// `ptr` must not be used if the state was freed.
+    unsafe fn release(ptr: *mut Self) {
+        if ptr.is_null() {
+            return;
+        }
+        let prev = unsafe { &*ptr }.ref_count.fetch_sub(1, Ordering::Release);
+        if prev == 1 {
+            // Acquire fence pairs with the Release stores of every other thread
+            // that previously held a reference, so the freeing thread observes
+            // all their writes. This is the canonical Arc-style refcount drop.
+            core::sync::atomic::fence(Ordering::Acquire);
+            drop(unsafe { Box::from_raw(ptr) });
+        }
+    }
 }
 
 /// Safe wrapper around `AVCaptureAudioDataOutput`.
@@ -234,6 +267,7 @@ impl AudioDataOutput {
         })?;
         let state = Box::new(AudioCallbackState {
             callback: Box::new(callback),
+            ref_count: AtomicUsize::new(1),
         });
         let userdata = Box::into_raw(state).cast::<c_void>();
         let mut err: *mut c_char = ptr::null_mut();
@@ -243,12 +277,17 @@ impl AudioDataOutput {
                 queue_label.as_ptr(),
                 Some(audio_sample_trampoline),
                 userdata,
-                Some(audio_callback_drop),
+                Some(audio_callback_retain),
+                Some(audio_callback_release),
                 &mut err,
             )
         };
+        // On success the Swift callback box took a +1 via `audio_callback_retain`;
+        // drop our creation reference so the state is owned solely by Swift and is
+        // freed only once the box's `deinit` runs (after any in-flight callback).
+        // On error Swift never retained, so this releases the final reference.
+        unsafe { audio_callback_release(userdata) };
         if status != ffi::status::OK {
-            unsafe { audio_callback_drop(userdata) };
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
@@ -353,11 +392,21 @@ unsafe extern "C" fn audio_sample_trampoline(userdata: *mut c_void, sample_buffe
     });
 }
 
-unsafe extern "C" fn audio_callback_drop(userdata: *mut c_void) {
+unsafe extern "C" fn audio_callback_retain(userdata: *mut c_void) {
+    if userdata.is_null() {
+        return;
+    }
+    // SAFETY: `userdata` is the `Box<AudioCallbackState>` cast to `*mut c_void`
+    // in `set_sample_buffer_handler`, kept alive by the Swift callback box.
+    unsafe { AudioCallbackState::retain(userdata.cast::<AudioCallbackState>()) };
+}
+
+unsafe extern "C" fn audio_callback_release(userdata: *mut c_void) {
     if userdata.is_null() {
         return;
     }
     // SAFETY: `userdata` was created by `Box::into_raw(Box::new(AudioCallbackState { .. }))`
-    // in `set_sample_buffer_handler` and is only freed here, exactly once.
-    drop(Box::from_raw(userdata.cast::<AudioCallbackState>()));
+    // in `set_sample_buffer_handler`. `release` frees the box once the last
+    // reference (Rust creation ref + Swift callback box) is dropped.
+    unsafe { AudioCallbackState::release(userdata.cast::<AudioCallbackState>()) };
 }

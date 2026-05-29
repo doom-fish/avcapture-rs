@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_void};
 
-use super::{DropCallback, VideoSampleCallback};
+use super::{DropCallback, RetainCallback, VideoSampleCallback};
 
 extern "C" {
     pub fn av_capture_video_output_create(out_error_message: *mut *mut c_char) -> *mut c_void;
@@ -23,6 +23,7 @@ extern "C" {
         queue_label: *const c_char,
         callback: Option<VideoSampleCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;

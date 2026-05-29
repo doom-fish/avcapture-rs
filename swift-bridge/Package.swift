@@ -13,8 +13,7 @@ let package = Package(
         .target(
             name: "AVCaptureBridge",
             dependencies: [],
-            path: "Sources/AVCaptureBridge",
-            publicHeadersPath: "include"
+            path: "Sources/AVCaptureBridge"
         )
     ]
 )

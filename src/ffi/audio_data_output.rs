@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_void};
 
-use super::{AudioSampleCallback, DropCallback};
+use super::{AudioSampleCallback, DropCallback, RetainCallback};
 
 extern "C" {
     pub fn av_capture_audio_output_create(out_error_message: *mut *mut c_char) -> *mut c_void;
@@ -19,6 +19,7 @@ extern "C" {
         queue_label: *const c_char,
         callback: Option<AudioSampleCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;

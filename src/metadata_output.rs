@@ -215,7 +215,11 @@ unsafe extern "C" fn metadata_callback_trampoline(userdata: *mut c_void, payload
     let Ok(event) = parse_json_and_free::<MetadataObjectsEvent>(payload) else {
         return;
     };
-    (state.callback)(event);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("metadata_callback_trampoline", || {
+        (state.callback)(event);
+    });
 }
 
 unsafe extern "C" fn metadata_callback_drop(userdata: *mut c_void) {

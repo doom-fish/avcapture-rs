@@ -931,7 +931,11 @@ unsafe extern "C" fn slider_action_trampoline(userdata: *mut c_void, payload: *m
     let Ok(payload) = parse_json_and_free::<SliderActionPayload>(payload) else {
         return;
     };
-    (state.callback)(payload.value);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("slider_action_trampoline", || {
+        (state.callback)(payload.value);
+    });
 }
 
 unsafe extern "C" fn slider_callback_drop(userdata: *mut c_void) {
@@ -948,7 +952,11 @@ unsafe extern "C" fn index_picker_action_trampoline(userdata: *mut c_void, paylo
     let Ok(payload) = parse_json_and_free::<IndexPickerActionPayload>(payload) else {
         return;
     };
-    (state.callback)(payload.selected_index);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("index_picker_action_trampoline", || {
+        (state.callback)(payload.selected_index);
+    });
 }
 
 unsafe extern "C" fn index_picker_callback_drop(userdata: *mut c_void) {
@@ -968,7 +976,11 @@ unsafe extern "C" fn session_controls_delegate_trampoline(
     let Ok(event) = parse_json_and_free::<CaptureSessionControlsEvent>(payload) else {
         return;
     };
-    (state.callback)(event);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("session_controls_delegate_trampoline", || {
+        (state.callback)(event);
+    });
 }
 
 unsafe extern "C" fn session_controls_delegate_callback_drop(userdata: *mut c_void) {
@@ -993,7 +1005,14 @@ unsafe extern "C" fn session_deferred_start_delegate_trampoline(
     let Ok(event) = parse_json_and_free::<CaptureSessionDeferredStartEvent>(payload) else {
         return;
     };
-    (state.callback)(event);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic(
+        "session_deferred_start_delegate_trampoline",
+        || {
+            (state.callback)(event);
+        },
+    );
 }
 
 unsafe extern "C" fn session_deferred_start_delegate_callback_drop(userdata: *mut c_void) {

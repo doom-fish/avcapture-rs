@@ -32,6 +32,7 @@ public typealias AVCPhotoCallback = @convention(c) (
     UnsafeMutablePointer<CChar>?
 ) -> Void
 public typealias AVCDropCallback = @convention(c) (UnsafeMutableRawPointer?) -> Void
+public typealias AVCRetainCallback = @convention(c) (UnsafeMutableRawPointer?) -> Void
 
 final class AVCJsonCallbackBox {
     let callback: AVCJsonCallback

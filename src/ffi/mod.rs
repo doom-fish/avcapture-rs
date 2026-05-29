@@ -6,6 +6,14 @@ use ::core::ffi::{c_char, c_void};
 
 pub use doom_fish_utils::ffi_callbacks::DropCallback;
 
+/// C trampoline handed to Swift to take a +1 reference on a refcounted Rust
+/// callback context.
+///
+/// Keeps the context alive for the lifetime of the holding bridge object so an
+/// in-flight callback can never observe a freed context. Signature matches
+/// [`DropCallback`].
+pub type RetainCallback = unsafe extern "C" fn(user_data: *mut c_void);
+
 pub type VideoSampleCallback = unsafe extern "C" fn(
     userdata: *mut c_void,
     sample_buffer: *mut c_void,

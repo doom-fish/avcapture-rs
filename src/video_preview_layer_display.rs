@@ -534,7 +534,11 @@ unsafe extern "C" fn desk_view_completion_trampoline(userdata: *mut c_void, payl
         ),
         Err(err) => Err(err),
     };
-    (state.callback)(result);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("desk_view_completion_trampoline", || {
+        (state.callback)(result);
+    });
 }
 
 unsafe extern "C" fn desk_view_completion_drop(userdata: *mut c_void) {

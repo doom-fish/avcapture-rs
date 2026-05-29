@@ -16,31 +16,38 @@ private struct VideoDataOutputInfoSnapshot: Codable {
 private final class VideoSampleCallbackBox {
     let callback: AVCVideoSampleCallback
     let userData: UnsafeMutableRawPointer?
-    let dropUserData: AVCDropCallback?
-    private var disposed = false
+    let releaseUserData: AVCDropCallback?
 
     init(
         callback: @escaping AVCVideoSampleCallback,
         userData: UnsafeMutableRawPointer?,
-        dropUserData: AVCDropCallback?
+        retainUserData: AVCRetainCallback?,
+        releaseUserData: AVCDropCallback?
     ) {
         self.callback = callback
         self.userData = userData
-        self.dropUserData = dropUserData
+        self.releaseUserData = releaseUserData
+        // Take a +1 on the refcounted Rust callback context for the lifetime of
+        // this box. An in-flight sample callback (dispatched on the capture
+        // queue) retains this box for the duration of `emit`, so the matching
+        // release in `deinit` cannot run — and the context cannot be freed —
+        // until that callback completes. This prevents a use-after-free when
+        // `clearCallback` drops the box while a callback is already in flight.
+        if let userData, let retainUserData {
+            retainUserData(userData)
+        }
+    }
+
+    deinit {
+        if let userData, let releaseUserData {
+            releaseUserData(userData)
+        }
     }
 
     func emit(sampleBuffer: CMSampleBuffer, pixelBuffer: CVPixelBuffer?) {
         let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
         let pixelOpaque = pixelBuffer.map { Unmanaged.passRetained($0).toOpaque() }
         callback(userData, sampleOpaque, pixelOpaque)
-    }
-
-    func dispose() {
-        guard !disposed else { return }
-        disposed = true
-        if let userData, let dropUserData {
-            dropUserData(userData)
-        }
     }
 }
 
@@ -107,11 +114,17 @@ final class VideoDataOutputBox: CaptureOutputBoxBase {
     func setCallback(
         callback: @escaping AVCVideoSampleCallback,
         userData: UnsafeMutableRawPointer?,
-        dropUserData: AVCDropCallback?,
+        retainUserData: AVCRetainCallback?,
+        releaseUserData: AVCDropCallback?,
         queueLabel: String
     ) {
         clearCallback()
-        let box = VideoSampleCallbackBox(callback: callback, userData: userData, dropUserData: dropUserData)
+        let box = VideoSampleCallbackBox(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: releaseUserData
+        )
         let delegate = VideoSampleDelegate(owner: self)
         let queue = DispatchQueue(label: queueLabel)
         videoOutput.setSampleBufferDelegate(delegate, queue: queue)
@@ -124,7 +137,11 @@ final class VideoDataOutputBox: CaptureOutputBoxBase {
         videoOutput.setSampleBufferDelegate(nil, queue: nil)
         delegate = nil
         callbackQueue = nil
-        callbackBox?.dispose()
+        // Dropping our strong reference here does NOT synchronously free the
+        // Rust context: any in-flight sample callback holds its own strong
+        // reference to the box (via `owner?.callbackBox?.emit`), so the box's
+        // `deinit` — and the matching context release — is deferred until that
+        // callback returns.
         callbackBox = nil
     }
 }
@@ -190,6 +207,7 @@ public func av_capture_video_output_set_sample_buffer_callback(
     _ queueLabelPtr: UnsafePointer<CChar>,
     _ callback: AVCVideoSampleCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
@@ -199,7 +217,13 @@ public func av_capture_video_output_set_sample_buffer_callback(
     }
     let output = avcUnretained(outputPtr, as: VideoDataOutputBox.self)
     let queueLabel = String(cString: queueLabelPtr)
-    output.setCallback(callback: callback, userData: userData, dropUserData: dropUserData, queueLabel: queueLabel)
+    output.setCallback(
+        callback: callback,
+        userData: userData,
+        retainUserData: retainUserData,
+        releaseUserData: dropUserData,
+        queueLabel: queueLabel
+    )
     return AVC_OK
 }
 

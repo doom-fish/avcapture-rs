@@ -501,11 +501,15 @@ unsafe extern "C" fn photo_capture_event_trampoline(
     } else {
         Some(Photo::from_raw(photo_ptr))
     };
-    (state.callback)(PhotoCaptureEvent {
-        unique_id: result.unique_id,
-        error: result.error,
-        resolved_settings: result.resolved_settings,
-        photo,
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("photo_capture_event_trampoline", || {
+        (state.callback)(PhotoCaptureEvent {
+            unique_id: result.unique_id,
+            error: result.error,
+            resolved_settings: result.resolved_settings,
+            photo,
+        });
     });
 }
 
@@ -531,7 +535,11 @@ unsafe extern "C" fn photo_output_readiness_trampoline(
     let Ok(payload) = parse_json_and_free::<PhotoOutputReadinessPayload>(payload) else {
         return;
     };
-    (state.callback)(payload.capture_readiness);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("photo_output_readiness_trampoline", || {
+        (state.callback)(payload.capture_readiness);
+    });
 }
 
 unsafe extern "C" fn photo_output_readiness_callback_drop(userdata: *mut c_void) {

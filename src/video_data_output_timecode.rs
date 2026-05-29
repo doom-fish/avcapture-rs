@@ -707,7 +707,11 @@ unsafe extern "C" fn timecode_delegate_trampoline(userdata: *mut c_void, payload
     let Ok(event) = parse_json_and_free::<CaptureTimecodeGeneratorEvent>(payload) else {
         return;
     };
-    (state.callback)(event);
+    // User closures can panic; catch them here so the panic doesn't unwind
+    // across the `extern "C"` boundary (which is UB).
+    doom_fish_utils::panic_safe::catch_user_panic("timecode_delegate_trampoline", || {
+        (state.callback)(event);
+    });
 }
 
 unsafe extern "C" fn timecode_delegate_drop(userdata: *mut c_void) {
