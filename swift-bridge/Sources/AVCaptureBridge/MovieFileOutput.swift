@@ -58,13 +58,24 @@ private final class FileOutputSampleBufferCallbackBox {
     }
 
     func emit(sampleBuffer: CMSampleBuffer) {
+        guard !disposed else { return }
         let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
         callback(userData, sampleOpaque)
     }
 
     func dispose() {
-        guard !disposed else { return }
+        // Stop emitting; the context release is deferred to `deinit` so any
+        // in-flight boundary callback keeps the context alive until it returns.
         disposed = true
+    }
+
+    deinit {
+        // Release the refcounted Rust callback context here rather than in
+        // `dispose()`. The boundary delegate closure holds a strong reference to
+        // this box for the duration of `emit`, so this `deinit` cannot run until
+        // an in-flight callback returns. Freeing in `dispose()` would let
+        // `clearSampleBufferBoundaryCallback` free the context while a callback
+        // already in flight still reads it (use-after-free).
         if let userData, let dropUserData {
             dropUserData(userData)
         }

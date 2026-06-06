@@ -50,6 +50,19 @@ final class AVCJsonCallbackBox {
         self.dropUserData = dropUserData
     }
 
+    deinit {
+        // Release the refcounted Rust callback context here rather than in
+        // `dispose()`. An in-flight callback (dispatched on the capture queue)
+        // holds a strong reference to this box for the duration of `emit`, so
+        // this `deinit` — and the matching context release — cannot run until
+        // that callback completes. Freeing in `dispose()` instead would let
+        // `clearCallback` free the context while a callback already in flight
+        // still reads it (use-after-free).
+        if let userData, let dropUserData {
+            dropUserData(userData)
+        }
+    }
+
     func emit<T: Encodable>(_ payload: T) {
         guard !disposed,
               let json = try? avcEncodeJSON(payload),
@@ -61,11 +74,9 @@ final class AVCJsonCallbackBox {
     }
 
     func dispose() {
-        guard !disposed else { return }
+        // Stop emitting; the context release is deferred to `deinit` so any
+        // in-flight callback keeps the context alive until it returns.
         disposed = true
-        if let userData, let dropUserData {
-            dropUserData(userData)
-        }
     }
 }
 
@@ -100,8 +111,16 @@ final class AVCPhotoCallbackBox {
     }
 
     func dispose() {
-        guard !disposed else { return }
+        // Stop emitting; the context release is deferred to `deinit` so any
+        // in-flight callback keeps the context alive until it returns.
         disposed = true
+    }
+
+    deinit {
+        // Release the refcounted Rust callback context here rather than in
+        // `dispose()`, so an in-flight callback (which holds a strong reference
+        // to this box for the duration of `emit`) defers the release until it
+        // returns. Freeing in `dispose()` would risk a use-after-free.
         if let userData, let dropUserData {
             dropUserData(userData)
         }
