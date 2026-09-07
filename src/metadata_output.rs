@@ -2,11 +2,13 @@
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
+use std::collections::HashSet;
 use std::ffi::CString;
 
 use serde::Deserialize;
 
-use crate::error::{from_swift, AVCaptureError};
+use crate::callback::{ArcContext, SerializedCallback};
+use crate::error::{from_swift, report_callback_error, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{json_cstring, parse_json_and_free, CaptureRect};
 use crate::output::CaptureOutputRef;
@@ -47,9 +49,7 @@ pub struct MetadataObjectsEvent {
     pub objects: Vec<MetadataObject>,
 }
 
-struct MetadataCallbackState {
-    callback: Box<dyn FnMut(MetadataObjectsEvent) + Send + 'static>,
-}
+type MetadataCallbackState = SerializedCallback<MetadataObjectsEvent>;
 
 /// Safe wrapper around `AVCaptureMetadataOutput`.
 #[derive(Debug)]
@@ -72,6 +72,8 @@ impl CaptureOutputRef for MetadataOutput {
         self.ptr
     }
 }
+
+impl crate::output::sealed::Sealed for MetadataOutput {}
 
 impl MetadataOutput {
     /// Creates a new `AVCaptureMetadataOutput` wrapper.
@@ -131,6 +133,21 @@ impl MetadataOutput {
             .into_iter()
             .map(|value| value.as_ref().to_owned())
             .collect::<Vec<_>>();
+        let available = self
+            .available_metadata_object_types()?
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let unsupported = values
+            .iter()
+            .filter(|value| !available.contains(*value))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            return Err(AVCaptureError::InvalidArgument(format!(
+                "metadata object types are not available in the current configuration: {}",
+                unsupported.join(", ")
+            )));
+        }
         let json = json_cstring(&values, "metadata object types")?;
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
@@ -176,10 +193,8 @@ impl MetadataOutput {
         let queue_label = CString::new(queue_label).map_err(|error| {
             AVCaptureError::InvalidArgument(format!("queue label contains NUL byte: {error}"))
         })?;
-        let state = Box::new(MetadataCallbackState {
-            callback: Box::new(callback),
-        });
-        let userdata = Box::into_raw(state).cast::<c_void>();
+        let state = ArcContext::new(MetadataCallbackState::new(callback));
+        let userdata = state.as_ptr();
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::metadata_output::av_capture_metadata_output_set_metadata_objects_callback(
@@ -187,12 +202,12 @@ impl MetadataOutput {
                 queue_label.as_ptr(),
                 Some(metadata_callback_trampoline),
                 userdata,
-                Some(metadata_callback_drop),
+                Some(metadata_callback_retain),
+                Some(metadata_callback_release),
                 &mut err,
             )
         };
         if status != ffi::status::OK {
-            unsafe { metadata_callback_drop(userdata) };
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
@@ -209,22 +224,23 @@ impl MetadataOutput {
 }
 
 unsafe extern "C" fn metadata_callback_trampoline(userdata: *mut c_void, payload: *mut c_char) {
-    let Some(state) = userdata.cast::<MetadataCallbackState>().as_mut() else {
+    let Some(state) = ArcContext::<MetadataCallbackState>::get(userdata) else {
         return;
     };
-    let Ok(event) = parse_json_and_free::<MetadataObjectsEvent>(payload) else {
-        return;
+    let event = match parse_json_and_free::<MetadataObjectsEvent>(payload) {
+        Ok(event) => event,
+        Err(error) => {
+            report_callback_error("metadata_callback_trampoline", error);
+            return;
+        }
     };
-    // User closures can panic; catch them here so the panic doesn't unwind
-    // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("metadata_callback_trampoline", || {
-        (state.callback)(event);
-    });
+    state.dispatch("metadata_callback_trampoline", event);
 }
 
-unsafe extern "C" fn metadata_callback_drop(userdata: *mut c_void) {
-    if userdata.is_null() {
-        return;
-    }
-    drop(Box::from_raw(userdata.cast::<MetadataCallbackState>()));
+unsafe extern "C" fn metadata_callback_retain(userdata: *mut c_void) {
+    ArcContext::<MetadataCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn metadata_callback_release(userdata: *mut c_void) {
+    ArcContext::<MetadataCallbackState>::release(userdata);
 }

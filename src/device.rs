@@ -32,7 +32,6 @@ macro_rules! raw_i32_enum {
         impl $name {
             #[doc = "Creates the enum from its raw SDK value."]
             #[must_use]
-            /// Wraps an existing `AVCapture` pointer.
             pub const fn from_raw(raw: i32) -> Self {
                 match raw {
                     $($raw => Self::$variant,)+
@@ -93,7 +92,6 @@ macro_rules! raw_string_enum {
 
             #[doc = "Creates the enum from its raw SDK value."]
             #[must_use]
-            /// Wraps an existing `AVCapture` pointer.
             pub fn from_raw(raw: &str) -> Self {
                 match raw {
                     $($raw => Self::$variant,)+
@@ -153,7 +151,7 @@ impl MediaType {
     }
 
     #[must_use]
-    /// Wraps an existing `AVMediaType` pointer.
+    /// Decodes an `AVMediaType` raw value.
     pub fn from_raw(raw: &str) -> Self {
         match raw {
             "audio" => Self::Audio,
@@ -197,7 +195,7 @@ pub enum AuthorizationStatus {
 
 impl AuthorizationStatus {
     #[must_use]
-    /// Wraps an existing `AVAuthorizationStatus` pointer.
+    /// Decodes an `AVAuthorizationStatus` raw value.
     pub const fn from_raw(raw: i32) -> Self {
         match raw {
             0 => Self::NotDetermined,
@@ -244,7 +242,7 @@ impl CaptureDeviceType {
     }
 
     #[must_use]
-    /// Wraps an existing `AVCaptureDeviceType` pointer.
+    /// Decodes an `AVCaptureDeviceType` raw value.
     pub fn from_raw(raw: &str) -> Self {
         match raw {
             "AVCaptureDeviceTypeExternal" | "AVCaptureDeviceTypeExternalUnknown" => Self::External,
@@ -408,7 +406,7 @@ pub enum CaptureCameraLensSmudgeDetectionStatus {
 
 impl CaptureCameraLensSmudgeDetectionStatus {
     #[must_use]
-    /// Wraps an existing `AVCaptureCameraLensSmudgeDetectionStatus` pointer.
+    /// Decodes an `AVCaptureCameraLensSmudgeDetectionStatus` raw value.
     pub const fn from_raw(raw: i32) -> Self {
         match raw {
             0 => Self::Disabled,
@@ -486,7 +484,7 @@ impl CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions {
     pub const EXPOSURE_MODE_CHANGED: Self = Self(1 << 2);
 
     #[must_use]
-    /// Wraps an existing `AVCapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions` pointer.
+    /// Decodes raw restricted-switching behavior condition bits.
     pub const fn from_raw(raw: u64) -> Self {
         Self(raw)
     }
@@ -604,8 +602,7 @@ impl CaptureReactionType {
         if string_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
-        let value: String = parse_json_string_and_free(string_ptr);
-        Ok(value)
+        parse_json_and_free(string_ptr)
     }
 }
 
@@ -613,6 +610,7 @@ impl CaptureReactionType {
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCaptureDevice` state.
 pub struct CaptureDeviceInfo {
+    #[serde(rename = "uniqueID", alias = "uniqueId")]
     /// The unique id reported by `AVCaptureDevice`.
     pub unique_id: String,
     /// The localized name reported by `AVCaptureDevice`.
@@ -625,6 +623,7 @@ pub struct CaptureDeviceInfo {
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCaptureDeviceInputSource` state.
 pub struct CaptureDeviceInputSourceInfo {
+    #[serde(rename = "inputSourceID", alias = "inputSourceId")]
     /// The input source id reported by `AVCaptureDeviceInputSource`.
     pub input_source_id: String,
     /// The localized name reported by `AVCaptureDeviceInputSource`.
@@ -660,6 +659,7 @@ pub struct CaptureDeviceRotationCoordinatorInfo {
 #[serde(rename_all = "camelCase")]
 /// Wraps `AVCaptureDevice`.
 pub struct CaptureDeviceDetails {
+    #[serde(rename = "uniqueID", alias = "uniqueId")]
     /// The unique id reported by `AVCaptureDevice`.
     pub unique_id: String,
     /// The localized name reported by `AVCaptureDevice`.
@@ -722,6 +722,7 @@ pub struct CaptureDeviceDetails {
     /// The input sources reported by `AVCaptureDevice`.
     pub input_sources: Vec<CaptureDeviceInputSourceInfo>,
     #[serde(default)]
+    #[serde(rename = "activeInputSourceID", alias = "activeInputSourceId")]
     /// The active input source id reported by `AVCaptureDevice`.
     pub active_input_source_id: Option<String>,
     #[serde(default)]
@@ -817,8 +818,12 @@ impl Drop for CaptureDeviceInputSource {
 }
 
 impl CaptureDeviceInputSource {
-    /// Wraps an existing `AVCaptureDeviceInputSource` pointer.
-    pub const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `DeviceInputSourceBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `DeviceInputSourceBox` returned at +1 by this crate's Swift bridge.
+    pub(crate) const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 
@@ -861,8 +866,12 @@ impl Drop for CaptureDeviceRotationCoordinator {
 }
 
 impl CaptureDeviceRotationCoordinator {
-    /// Wraps an existing `AVCaptureDeviceRotationCoordinator` pointer.
-    pub const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `DeviceRotationCoordinatorBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `DeviceRotationCoordinatorBox` returned at +1 by this crate's Swift bridge.
+    pub(crate) const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 
@@ -1340,7 +1349,7 @@ impl CaptureDevice {
             if ptr.is_null() {
                 return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
             }
-            input_sources.push(CaptureDeviceInputSource::from_raw(ptr));
+            input_sources.push(unsafe { CaptureDeviceInputSource::from_retained_bridge_box(ptr) });
         }
         Ok(input_sources)
     }
@@ -1355,7 +1364,9 @@ impl CaptureDevice {
             }
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
         }
-        Ok(Some(CaptureDeviceInputSource::from_raw(ptr)))
+        Ok(Some(unsafe {
+            CaptureDeviceInputSource::from_retained_bridge_box(ptr)
+        }))
     }
 
     /// Corresponds to `AVCaptureDevice.rotation_coordinator`.
@@ -1372,7 +1383,9 @@ impl CaptureDevice {
             }
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
         }
-        Ok(Some(CaptureDeviceRotationCoordinator::from_raw(ptr)))
+        Ok(Some(unsafe {
+            CaptureDeviceRotationCoordinator::from_retained_bridge_box(ptr)
+        }))
     }
 
     /// Returns whether `AVCaptureDevice` is exposure mode supported.
@@ -1430,7 +1443,7 @@ impl CaptureDevice {
             if ptr.is_null() {
                 return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
             }
-            formats.push(CaptureDeviceFormat::from_raw(ptr));
+            formats.push(unsafe { CaptureDeviceFormat::from_retained_bridge_box(ptr) });
         }
         Ok(formats)
     }
@@ -1445,7 +1458,9 @@ impl CaptureDevice {
             }
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
         }
-        Ok(Some(CaptureDeviceFormat::from_raw(ptr)))
+        Ok(Some(unsafe {
+            CaptureDeviceFormat::from_retained_bridge_box(ptr)
+        }))
     }
 
     /// Corresponds to `AVCaptureDevice.active_video_min_frame_duration`.
@@ -1785,14 +1800,6 @@ fn preset_cstring(preset: &CaptureSessionPreset) -> Result<CString, AVCaptureErr
     CString::new(preset.as_raw()).map_err(|error| {
         AVCaptureError::InvalidArgument(format!("preset contains NUL byte: {error}"))
     })
-}
-
-fn parse_json_string_and_free(json_ptr: *mut c_char) -> String {
-    let json = unsafe { std::ffi::CStr::from_ptr(json_ptr) }
-        .to_string_lossy()
-        .into_owned();
-    unsafe { ffi::core::avc_string_free(json_ptr) };
-    serde_json::from_str::<String>(&json).unwrap_or(json)
 }
 
 const fn option_bool_from_raw(raw: i32) -> Option<bool> {

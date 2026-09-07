@@ -6,7 +6,7 @@ struct PhotoOutputInfoPayload: Codable {
     let availablePhotoCodecTypes: [String]
     let availablePhotoFileTypes: [String]
     let availablePhotoPixelFormatTypes: [UInt32]
-    let availableRawPhotoPixelFormatTypes: [UInt32]
+    let availableRawPhotoPixelFormatTypes: [UInt32]?
     let supportedFlashModes: [Int32]
     let maxPhotoDimensions: VideoDimensionsPayload?
     let captureReadiness: Int32?
@@ -17,7 +17,7 @@ struct PhotoOutputInfoPayload: Codable {
 }
 
 struct PhotoCaptureResultPayload: Codable {
-    let uniqueId: Int64
+    let uniqueID: Int64
     let error: String?
     let resolvedSettings: ResolvedPhotoSettingsInfoPayload
 }
@@ -26,11 +26,57 @@ private struct PhotoOutputReadinessPayload: Codable {
     let captureReadiness: Int32
 }
 
-private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
-    private weak var owner: PhotoOutputBox?
+private final class PhotoCaptureState {
+    private let callbackBox: AVCPhotoCallbackBox
+    private let lock = NSLock()
+    private var processedPhoto: AVCapturePhoto?
+    private var processingError: Error?
 
-    init(owner: PhotoOutputBox) {
-        self.owner = owner
+    init(callbackBox: AVCPhotoCallbackBox) {
+        self.callbackBox = callbackBox
+    }
+
+    func recordProcessedPhoto(_ photo: AVCapturePhoto, error: Error?) {
+        lock.lock()
+        processedPhoto = photo
+        if let error {
+            processingError = error
+        }
+        lock.unlock()
+    }
+
+    func complete(resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        lock.lock()
+        let photo = processedPhoto
+        let finalError = error ?? processingError
+        processedPhoto = nil
+        processingError = nil
+        lock.unlock()
+
+        callbackBox.emit(
+            photo,
+            payload: PhotoCaptureResultPayload(
+                uniqueID: Int64(resolvedSettings.uniqueID),
+                error: finalError?.localizedDescription,
+                resolvedSettings: resolvedPhotoSettingsInfoPayload(from: resolvedSettings)
+            )
+        )
+        callbackBox.dispose()
+    }
+}
+
+private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
+    private weak var outputOwner: PhotoOutputBox?
+    private let state: PhotoCaptureState
+    private var keepAlive: PhotoCaptureDelegate?
+
+    init(outputOwner: PhotoOutputBox, state: PhotoCaptureState) {
+        self.outputOwner = outputOwner
+        self.state = state
+    }
+
+    func activate() {
+        keepAlive = self
     }
 
     func photoOutput(
@@ -38,7 +84,7 @@ private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegat
         didFinishProcessingPhoto photo: AVCapturePhoto,
         error: Error?
     ) {
-        owner?.recordProcessedPhoto(photo, error: error)
+        state.recordProcessedPhoto(photo, error: error)
     }
 
     func photoOutput(
@@ -46,7 +92,9 @@ private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegat
         didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
         error: Error?
     ) {
-        owner?.completeCapture(resolvedSettings: resolvedSettings, error: error)
+        state.complete(resolvedSettings: resolvedSettings, error: error)
+        outputOwner?.finishCapture(delegate: self)
+        keepAlive = nil
     }
 }
 
@@ -70,17 +118,12 @@ private final class PhotoOutputReadinessCoordinatorDelegateBox: NSObject,
 
 final class PhotoOutputBox: CaptureOutputBoxBase {
     let photoOutput = AVCapturePhotoOutput()
-    fileprivate var captureDelegate: PhotoCaptureDelegate?
-    fileprivate var callbackBox: AVCPhotoCallbackBox?
-    fileprivate var processedPhoto: AVCapturePhoto?
-    fileprivate var processingError: Error?
+    private let captureLock = NSLock()
+    private let captureSlot = AVCDelegateSlot("photo capture delegate")
+    private var captureDelegate: PhotoCaptureDelegate?
 
     override var output: AVCaptureOutput {
         photoOutput
-    }
-
-    deinit {
-        clearCaptureState()
     }
 
     fileprivate func infoPayload() -> PhotoOutputInfoPayload {
@@ -122,7 +165,15 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
         let availablePhotoCodecTypes = photoOutput.availablePhotoCodecTypes.map { $0.rawValue }
         let availablePhotoFileTypes = photoOutput.availablePhotoFileTypes.map { $0.rawValue }
         let availablePhotoPixelFormatTypes = photoOutput.availablePhotoPixelFormatTypes.map { UInt32($0) }
-        let availableRawPhotoPixelFormatTypes = photoOutput.availableRawPhotoPixelFormatTypes.map { UInt32($0) }
+        let availableRawPhotoPixelFormatTypes: [UInt32]?
+        #if os(macOS)
+        availableRawPhotoPixelFormatTypes = nil
+        #else
+        availableRawPhotoPixelFormatTypes = photoOutput.availableRawPhotoPixelFormatTypes.map { UInt32($0) }
+        #endif
+        captureLock.lock()
+        let callbackInstalled = captureDelegate != nil
+        captureLock.unlock()
         return PhotoOutputInfoPayload(
             connectionCount: photoOutput.connections.count,
             availablePhotoCodecTypes: availablePhotoCodecTypes,
@@ -135,7 +186,7 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
             maxPhotoQualityPrioritization: maxPhotoQualityPrioritization,
             highResolutionCaptureEnabled: photoOutput.isHighResolutionCaptureEnabled,
             responsiveCaptureEnabled: responsiveCaptureEnabled,
-            callbackInstalled: callbackBox != nil
+            callbackInstalled: callbackInstalled
         )
     }
 
@@ -143,11 +194,9 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
         settingsPtr: UnsafeMutableRawPointer,
         callback: @escaping AVCPhotoCallback,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
         dropUserData: AVCDropCallback?
     ) throws {
-        guard callbackBox == nil else {
-            throw BridgeError.message("photo capture is already in progress")
-        }
         guard !photoOutput.connections.isEmpty else {
             throw BridgeError.message("photo output is not attached to a session")
         }
@@ -155,50 +204,51 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
             throw BridgeError.message("photo output has no video-capable connection")
         }
 
-        processedPhoto = nil
-        processingError = nil
-        callbackBox = AVCPhotoCallbackBox(callback: callback, userData: userData, dropUserData: dropUserData)
-        let delegate = PhotoCaptureDelegate(owner: self)
-        captureDelegate = delegate
-        photoOutput.capturePhoto(with: avcPhotoSettingsBox(settingsPtr).settings, delegate: delegate)
-    }
-
-    fileprivate func recordProcessedPhoto(_ photo: AVCapturePhoto, error: Error?) {
-        processedPhoto = photo
-        if let error {
-            processingError = error
-        }
-    }
-
-    fileprivate func completeCapture(
-        resolvedSettings: AVCaptureResolvedPhotoSettings,
-        error: Error?
-    ) {
-        callbackBox?.emit(
-            processedPhoto,
-            payload: PhotoCaptureResultPayload(
-                uniqueId: Int64(resolvedSettings.uniqueID),
-                error: (error ?? processingError)?.localizedDescription,
-                resolvedSettings: resolvedPhotoSettingsInfoPayload(from: resolvedSettings)
-            )
+        let callbackBox = AVCPhotoCallbackBox(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            dropUserData: dropUserData
         )
-        clearCaptureState()
+        let state = PhotoCaptureState(callbackBox: callbackBox)
+        let delegate = PhotoCaptureDelegate(outputOwner: self, state: state)
+        try captureSlot.acquire(delegate)
+        do {
+            try avcPhotoSettingsBox(settingsPtr).consumeForCapture()
+        } catch {
+            _ = captureSlot.release(delegate)
+            callbackBox.dispose()
+            throw error
+        }
+        captureLock.lock()
+        captureDelegate = delegate
+        captureLock.unlock()
+        delegate.activate()
+        photoOutput.capturePhoto(
+            with: avcPhotoSettingsBox(settingsPtr).settings,
+            delegate: delegate
+        )
     }
 
-    fileprivate func clearCaptureState() {
-        captureDelegate = nil
-        processedPhoto = nil
-        processingError = nil
-        callbackBox?.dispose()
-        callbackBox = nil
+    fileprivate func finishCapture(delegate: PhotoCaptureDelegate) {
+        guard captureSlot.release(delegate) else {
+            return
+        }
+        captureLock.lock()
+        if captureDelegate === delegate {
+            captureDelegate = nil
+        }
+        captureLock.unlock()
     }
 }
 
 @available(macOS 14.0, *)
 final class PhotoOutputReadinessCoordinatorBox: NSObject {
     let coordinator: AVCapturePhotoOutputReadinessCoordinator
-    fileprivate var delegateBox: PhotoOutputReadinessCoordinatorDelegateBox?
-    fileprivate var callbackBox: AVCJsonCallbackBox?
+    private let callbackLock = NSLock()
+    private let delegateSlot = AVCDelegateSlot("photo readiness delegate")
+    private var delegateBox: PhotoOutputReadinessCoordinatorDelegateBox?
+    private var callbackBox: AVCJsonCallbackBox?
 
     init(photoOutput: AVCapturePhotoOutput) {
         coordinator = AVCapturePhotoOutputReadinessCoordinator(photoOutput: photoOutput)
@@ -215,31 +265,48 @@ final class PhotoOutputReadinessCoordinatorBox: NSObject {
     fileprivate func setCallback(
         callback: @escaping AVCJsonCallback,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
         dropUserData: AVCDropCallback?
-    ) {
-        clearCallback()
+    ) throws {
         let callbackBox = AVCJsonCallbackBox(
             callback: callback,
             userData: userData,
+            retainUserData: retainUserData,
             dropUserData: dropUserData
         )
         let delegate = PhotoOutputReadinessCoordinatorDelegateBox(owner: self)
+        try delegateSlot.acquire(delegate)
+        callbackLock.lock()
         self.callbackBox = callbackBox
         delegateBox = delegate
+        callbackLock.unlock()
         coordinator.delegate = delegate
     }
 
     fileprivate func clearCallback() {
-        coordinator.delegate = nil
-        delegateBox = nil
+        callbackLock.lock()
+        let delegate = delegateBox
+        let callbackBox = self.callbackBox
+        if let delegate, delegateSlot.release(delegate) {
+            if coordinator.delegate === delegate {
+                coordinator.delegate = nil
+            }
+            delegateBox = nil
+            self.callbackBox = nil
+        }
+        callbackLock.unlock()
         callbackBox?.dispose()
-        callbackBox = nil
     }
 
     fileprivate func emitCaptureReadiness(
         _ captureReadiness: AVCapturePhotoOutput.CaptureReadiness
     ) {
-        callbackBox?.emit(PhotoOutputReadinessPayload(captureReadiness: Int32(captureReadiness.rawValue)))
+        callbackLock.lock()
+        let callbackBox = self.callbackBox
+        callbackLock.unlock()
+        callbackBox?.emit(
+            PhotoOutputReadinessPayload(captureReadiness: Int32(captureReadiness.rawValue))
+        )
     }
 
     fileprivate func startTrackingCaptureRequest(settingsPtr: UnsafeMutableRawPointer) {
@@ -256,6 +323,14 @@ public func av_capture_photo_output_create(
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> UnsafeMutableRawPointer? {
     avcRetain(PhotoOutputBox())
+}
+
+@_cdecl("av_capture_photo_output_retain")
+public func av_capture_photo_output_retain(
+    _ outputPtr: UnsafeMutableRawPointer
+) -> UnsafeMutableRawPointer {
+    _ = Unmanaged<PhotoOutputBox>.fromOpaque(outputPtr).retain()
+    return outputPtr
 }
 
 @_cdecl("av_capture_photo_output_release")
@@ -329,6 +404,7 @@ public func av_capture_photo_output_capture_photo(
     _ settingsPtr: UnsafeMutableRawPointer,
     _ callback: AVCPhotoCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
@@ -342,12 +418,13 @@ public func av_capture_photo_output_capture_photo(
             settingsPtr: settingsPtr,
             callback: callback,
             userData: userData,
+            retainUserData: retainUserData,
             dropUserData: dropUserData
         )
         return AVC_OK
     } catch {
         outErrorMessage?.pointee = ffiString(error.localizedDescription)
-        return AVC_OUTPUT_ERROR
+        return avcStatus(for: error, default: AVC_OUTPUT_ERROR)
     }
 }
 
@@ -402,6 +479,7 @@ public func av_capture_photo_output_readiness_coordinator_set_callback(
     _ coordinatorPtr: UnsafeMutableRawPointer,
     _ callback: AVCJsonCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
@@ -414,8 +492,18 @@ public func av_capture_photo_output_readiness_coordinator_set_callback(
         return AVC_CALLBACK_ERROR
     }
     let coordinator = avcUnretained(coordinatorPtr, as: PhotoOutputReadinessCoordinatorBox.self)
-    coordinator.setCallback(callback: callback, userData: userData, dropUserData: dropUserData)
-    return AVC_OK
+    do {
+        try coordinator.setCallback(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            dropUserData: dropUserData
+        )
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_CALLBACK_ERROR)
+    }
 }
 
 @_cdecl("av_capture_photo_output_readiness_coordinator_clear_callback")

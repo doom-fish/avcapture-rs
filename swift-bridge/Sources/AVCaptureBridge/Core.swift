@@ -12,11 +12,27 @@ let AVC_SESSION_ERROR: Int32 = -4
 let AVC_OUTPUT_ERROR: Int32 = -5
 let AVC_CALLBACK_ERROR: Int32 = -6
 let AVC_OPERATION_FAILED: Int32 = -7
+let AVC_DELEGATE_SLOT_OCCUPIED: Int32 = -8
+let AVC_UNSUPPORTED_PLATFORM: Int32 = -9
+let AVC_MAIN_THREAD_REQUIRED: Int32 = -10
+let AVC_OUTPUT_FILE_EXISTS: Int32 = -11
+let AVC_CANCELLED: Int32 = -12
+let AVC_BRIDGE_PROTOCOL: Int32 = -13
+let AVC_BRIDGE_SCHEMA_VERSION: UInt64 = 1
+let AVC_STREAM_BRIDGE_ERROR_KIND: Int32 = -1
 
 public typealias AVCVideoSampleCallback = @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafeMutableRawPointer?,
     UnsafeMutableRawPointer?
+) -> Void
+public typealias AVCVideoDataOutputEventCallback = @convention(c) (
+    UnsafeMutableRawPointer?,
+    Int32,
+    UnsafeMutableRawPointer?,
+    UnsafeMutableRawPointer?,
+    UnsafeMutablePointer<CChar>?,
+    UInt64
 ) -> Void
 public typealias AVCAudioSampleCallback = @convention(c) (
     UnsafeMutableRawPointer?,
@@ -34,96 +50,189 @@ public typealias AVCPhotoCallback = @convention(c) (
 public typealias AVCDropCallback = @convention(c) (UnsafeMutableRawPointer?) -> Void
 public typealias AVCRetainCallback = @convention(c) (UnsafeMutableRawPointer?) -> Void
 
-final class AVCJsonCallbackBox {
-    let callback: AVCJsonCallback
+final class AVCCallbackContextOwner {
     let userData: UnsafeMutableRawPointer?
-    let dropUserData: AVCDropCallback?
+    private let releaseUserData: AVCDropCallback?
+
+    init(
+        userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
+        releaseUserData: AVCDropCallback?
+    ) {
+        self.userData = userData
+        self.releaseUserData = releaseUserData
+        if let userData, let retainUserData {
+            retainUserData(userData)
+        }
+    }
+
+    deinit {
+        if let userData, let releaseUserData {
+            releaseUserData(userData)
+        }
+    }
+}
+
+final class AVCDelegateSlot {
+    private let name: String
+    private let lock = NSLock()
+    private weak var owner: AnyObject?
+
+    init(_ name: String) {
+        self.name = name
+    }
+
+    func acquire(_ newOwner: AnyObject) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard owner == nil else {
+            throw BridgeError.status(
+                AVC_DELEGATE_SLOT_OCCUPIED,
+                "\(name) is already registered"
+            )
+        }
+        owner = newOwner
+    }
+
+    func release(_ releasingOwner: AnyObject) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard owner === releasingOwner else {
+            return false
+        }
+        owner = nil
+        return true
+    }
+
+    func isOwned(by candidate: AnyObject) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return owner === candidate
+    }
+
+    var isOccupied: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return owner != nil
+    }
+}
+
+final class AVCSerialCallbackQueue {
+    let queue: DispatchQueue
+    private let key = DispatchSpecificKey<UInt8>()
+
+    init(label: String) {
+        queue = DispatchQueue(label: label)
+        queue.setSpecific(key: key, value: 1)
+    }
+
+    func drain() {
+        if DispatchQueue.getSpecific(key: key) == nil {
+            queue.sync {}
+        }
+    }
+}
+
+private struct AVCBridgeErrorPayload: Encodable {
+    let bridgeError: String
+}
+
+func avcBridgeErrorPayload(_ error: Error) -> UnsafeMutablePointer<CChar>? {
+    if let json = try? avcEncodeJSON(AVCBridgeErrorPayload(bridgeError: error.localizedDescription)) {
+        return ffiString(json)
+    }
+    return ffiString(
+        "{\"schemaVersion\":1,\"payload\":{\"bridgeError\":\"bridge payload encoding failed\"}}"
+    )
+}
+
+final class AVCJsonCallbackBox {
+    private let callback: AVCJsonCallback
+    private let contextOwner: AVCCallbackContextOwner
+    private let lock = NSLock()
     private var disposed = false
 
     init(
         callback: @escaping AVCJsonCallback,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback? = nil,
         dropUserData: AVCDropCallback?
     ) {
         self.callback = callback
-        self.userData = userData
-        self.dropUserData = dropUserData
-    }
-
-    deinit {
-        // Release the refcounted Rust callback context here rather than in
-        // `dispose()`. An in-flight callback (dispatched on the capture queue)
-        // holds a strong reference to this box for the duration of `emit`, so
-        // this `deinit` — and the matching context release — cannot run until
-        // that callback completes. Freeing in `dispose()` instead would let
-        // `clearCallback` free the context while a callback already in flight
-        // still reads it (use-after-free).
-        if let userData, let dropUserData {
-            dropUserData(userData)
-        }
+        contextOwner = AVCCallbackContextOwner(
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: dropUserData
+        )
     }
 
     func emit<T: Encodable>(_ payload: T) {
-        guard !disposed,
-              let json = try? avcEncodeJSON(payload),
-              let payloadPtr = ffiString(json)
-        else {
+        lock.lock()
+        let active = !disposed
+        let contextOwner = self.contextOwner
+        lock.unlock()
+        guard active else {
             return
         }
-        callback(userData, payloadPtr)
+        do {
+            callback(contextOwner.userData, ffiString(try avcEncodeJSON(payload)))
+        } catch {
+            callback(contextOwner.userData, avcBridgeErrorPayload(error))
+        }
     }
 
     func dispose() {
-        // Stop emitting; the context release is deferred to `deinit` so any
-        // in-flight callback keeps the context alive until it returns.
+        lock.lock()
         disposed = true
+        lock.unlock()
     }
 }
 
 final class AVCPhotoCallbackBox {
-    let callback: AVCPhotoCallback
-    let userData: UnsafeMutableRawPointer?
-    let dropUserData: AVCDropCallback?
+    private let callback: AVCPhotoCallback
+    private let contextOwner: AVCCallbackContextOwner
+    private let lock = NSLock()
     private var disposed = false
 
     init(
         callback: @escaping AVCPhotoCallback,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback? = nil,
         dropUserData: AVCDropCallback?
     ) {
         self.callback = callback
-        self.userData = userData
-        self.dropUserData = dropUserData
+        contextOwner = AVCCallbackContextOwner(
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: dropUserData
+        )
     }
 
     func emit<T: Encodable>(_ photo: AVCapturePhoto?, payload: T) {
-        guard !disposed else { return }
+        lock.lock()
+        let active = !disposed
+        let contextOwner = self.contextOwner
+        lock.unlock()
+        guard active else { return }
         let photoPtr = photo.map { avcRetain(PhotoBox($0)) }
-        guard let json = try? avcEncodeJSON(payload),
-              let payloadPtr = ffiString(json)
-        else {
+        do {
+            callback(
+                contextOwner.userData,
+                photoPtr,
+                ffiString(try avcEncodeJSON(payload))
+            )
+        } catch {
             if let photoPtr {
                 avcRelease(photoPtr, as: PhotoBox.self)
             }
-            return
+            callback(contextOwner.userData, nil, avcBridgeErrorPayload(error))
         }
-        callback(userData, photoPtr, payloadPtr)
     }
 
     func dispose() {
-        // Stop emitting; the context release is deferred to `deinit` so any
-        // in-flight callback keeps the context alive until it returns.
+        lock.lock()
         disposed = true
-    }
-
-    deinit {
-        // Release the refcounted Rust callback context here rather than in
-        // `dispose()`, so an in-flight callback (which holds a strong reference
-        // to this box for the duration of `emit`) defers the release until it
-        // returns. Freeing in `dispose()` would risk a use-after-free.
-        if let userData, let dropUserData {
-            dropUserData(userData)
-        }
+        lock.unlock()
     }
 }
 
@@ -139,17 +248,35 @@ func ffiString(_ string: String) -> UnsafeMutablePointer<CChar>? {
 
 enum BridgeError: LocalizedError {
     case message(String)
+    case status(Int32, String)
 
     var errorDescription: String? {
         switch self {
         case .message(let message):
             return message
+        case .status(_, let message):
+            return message
+        }
+    }
+
+    var statusCode: Int32? {
+        switch self {
+        case .message:
+            return nil
+        case .status(let status, _):
+            return status
         }
     }
 }
 
+func avcStatus(for error: Error, default defaultStatus: Int32) -> Int32 {
+    (error as? BridgeError)?.statusCode ?? defaultStatus
+}
+
 final class SessionBox: NSObject {
     let session = AVCaptureSession()
+    let controlsDelegateSlot = AVCDelegateSlot("session controls delegate")
+    let deferredStartDelegateSlot = AVCDelegateSlot("session deferred-start delegate")
 }
 
 final class DeviceBox: NSObject {
@@ -291,12 +418,24 @@ struct CaptureDeviceInfoPayload: Codable {
     let uniqueId: String
     let localizedName: String
     let manufacturer: String
+
+    enum CodingKeys: String, CodingKey {
+        case uniqueId = "uniqueID"
+        case localizedName
+        case manufacturer
+    }
 }
 
 struct DeviceInputInfoPayload: Codable {
     let deviceUniqueId: String
     let deviceLocalizedName: String
     let portsCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case deviceUniqueId = "deviceUniqueID"
+        case deviceLocalizedName
+        case portsCount
+    }
 }
 
 struct CaptureSessionInfoPayload: Codable {
@@ -341,6 +480,14 @@ struct VideoDataOutputInfoPayload: Codable {
     let availableVideoCvPixelFormatTypes: [UInt32]
     let callbackInstalled: Bool
     let videoSettings: VideoOutputSettingsPayload?
+
+    enum CodingKeys: String, CodingKey {
+        case connectionCount
+        case alwaysDiscardsLateVideoFrames
+        case availableVideoCvPixelFormatTypes = "availableVideoCVPixelFormatTypes"
+        case callbackInstalled
+        case videoSettings
+    }
 }
 
 struct AudioDataOutputInfoPayload: Codable {
@@ -350,7 +497,12 @@ struct AudioDataOutputInfoPayload: Codable {
 }
 
 func avcEncodeJSON<T: Encodable>(_ value: T) throws -> String {
-    let data = try JSONEncoder().encode(value)
+    let encoded = try JSONEncoder().encode(value)
+    var data = Data(
+        "{\"schemaVersion\":\(AVC_BRIDGE_SCHEMA_VERSION),\"payload\":".utf8
+    )
+    data.append(encoded)
+    data.append(UInt8(ascii: "}"))
     guard let string = String(data: data, encoding: .utf8) else {
         throw BridgeError.message("failed to UTF-8 encode JSON payload")
     }
@@ -365,7 +517,19 @@ func avcDecodeJSON<T: Decodable>(_ ptr: UnsafePointer<CChar>?, as type: T.Type) 
     guard let data = string.data(using: .utf8) else {
         throw BridgeError.message("payload was not valid UTF-8")
     }
-    return try JSONDecoder().decode(T.self, from: data)
+    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let version = object["schemaVersion"] as? NSNumber,
+          let payload = object["payload"]
+    else {
+        throw BridgeError.message("bridge JSON payload is not a versioned envelope")
+    }
+    guard version.uint64Value == AVC_BRIDGE_SCHEMA_VERSION else {
+        throw BridgeError.message(
+            "unsupported bridge JSON schema version \(version); expected \(AVC_BRIDGE_SCHEMA_VERSION)"
+        )
+    }
+    let payloadData = try JSONSerialization.data(withJSONObject: payload, options: [.fragmentsAllowed])
+    return try JSONDecoder().decode(T.self, from: payloadData)
 }
 
 func avcDecodeMediaType(_ raw: String) -> AVMediaType? {

@@ -13,6 +13,10 @@ fn metadata_output_smoke() -> common::TestResult {
     };
 
     output.set_metadata_object_types(Vec::<String>::new())?;
+    let unsupported = output
+        .set_metadata_object_types(["not.a.native.metadata.type"])
+        .expect_err("unsupported metadata types must be rejected before native assignment");
+    assert!(matches!(unsupported, AVCaptureError::InvalidArgument(_)));
     output.set_rect_of_interest(&CaptureRect::new(0.0, 0.0, 1.0, 1.0))?;
     output.set_metadata_objects_handler(Some("avcapture-tests-metadata"), |event| {
         eprintln!("metadata callback event: {event:?}");

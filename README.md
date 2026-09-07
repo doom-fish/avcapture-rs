@@ -2,13 +2,18 @@
 
 Safe Rust bindings for Apple's `AVCapture` stack on macOS.
 
-## 0.5.0 highlights
+## Highlights
 
 - Added the `async` feature's photo-capture futures plus executor-agnostic `BoundedAsyncStream<T>` wrappers for session state, sample buffers, movie/audio file-recording lifecycle, file-output sample-buffer boundaries, photo readiness, and metadata objects.
 - `AVCaptureDevice` now covers focus / white-balance / autofocus / color-space state, torch-level constants, input sources, rotation coordinators, Center Stage / microphone modes, reactions, and related notification constants.
 - Added `AVCaptureAudioPreviewOutput`, `AVCaptureAudioFileOutput`, `AVCaptureAudioChannel`, typed dropped-sample reasons, and base file-output sample-buffer-boundary callbacks.
 - Added `AVCapturePhotoOutputReadinessCoordinator`, `ResolvedPhotoSettings`, session controls / deferred-start delegates, Desk View / external-display helpers, and the `AVCaptureTimecode*` family.
-- `AVCaptureVideoPreviewLayer` now includes geometry conversion plus Desk View / external-display entry points.
+- `AVCaptureVideoPreviewLayer` includes geometry conversion, explicit borrowed/retained `CALayer` interop, frame/bounds/layout control, caller-owned host-layer attachment, and Desk View / external-display entry points.
+- Recording destinations are never recursively deleted: the default is atomic no-overwrite finalization, with explicit opt-in replacement limited to regular files.
+- Callback and stream delegate slots are exclusive and identity-checked. Competing registrations return `AVCaptureError::DelegateSlotOccupied` instead of silently replacing one another.
+- Rust/Swift JSON uses a validated versioned envelope, preserves acronym keys such as `fileURL`, `outputFileURL`, and `outputDeviceUniqueID`, and reports callback decode failures through `take_callback_diagnostics()`.
+- Photo capture retains completion ownership, treats `PhotoSettings` as single-use, and exposes retained pixel buffers plus the macOS-supported encoded file representation.
+- Video output reports the native macOS pixel-format capability and delivers `didDrop` events with an always-incremented count and optional reason.
 - Headless-safe numbered examples and per-area tests now cover examples `01` through `14`.
 
 See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
@@ -27,7 +32,7 @@ cargo add avcapture --features async
 
 ## Async API
 
-The `async` feature adds `avcapture::async_api`, which exposes runtime-agnostic `Future` wrappers for photo capture plus `BoundedAsyncStream<T>` adapters for session running/error/interruption state, video/audio sample buffers, movie/audio file recording lifecycle events, movie/audio file-output sample-buffer boundary callbacks, photo readiness, and metadata-object delivery.
+The `async` feature adds `avcapture::async_api`, which exposes runtime-agnostic `Future` wrappers for photo capture plus `BoundedAsyncStream<T>` adapters for session running/error/interruption state, video/audio sample buffers, movie/audio file recording lifecycle events, movie/audio file-output sample-buffer boundary callbacks, photo readiness, and metadata-object delivery. `VideoSampleBufferStream` preserves its sample-only event shape; `VideoDataOutputEventStream` is the opt-in stream for samples plus dropped-frame events. Native delegate-backed subscriptions have typed fallible entry points because each delegate slot has one exclusive owner. Recording streams provide `stop_and_finalize()` to await the native final callback.
 
 ## Example
 
@@ -76,8 +81,13 @@ These examples intentionally avoid `startRunning`, and only invoke photo/movie c
 
 - `MetadataOutput::new()` requires macOS 13.0 or newer at runtime.
 - `PhotoOutput` capability arrays are often empty until the output is attached to a session with a video source.
+- Raw-photo pixel-format capability is represented as `None` on macOS rather than as a fabricated empty list.
 - `PhotoSettings` flash-mode and quality-prioritization controls require macOS 13.0 or newer at runtime.
-- `VideoPreviewLayer` may not expose a connection until its session has an eligible video input.
+- A `PhotoSettings` value can be submitted for capture once. Use `copy_with_unique_id()` for another request.
+- `Photo::pixel_buffer()` returns a retained `CVPixelBuffer`; `Photo::file_data_representation()` returns owned encoded bytes when the native photo provides them.
+- Recording uses `RecordingOptions::default()` for no-overwrite behavior. `RecordingOptions::overwrite_regular_file()` is the explicit opt-in replacement policy.
+- `VideoPreviewLayer` operations are main-thread-only. The crate exposes the layer but does not own or create a window/view hierarchy; callers attach it to their own `CALayer`.
+- `VideoPreviewLayer` may not expose a connection until its session has an eligible video input, and geometry conversion requires meaningful non-zero bounds.
 - Newer surfaces such as session controls, Desk View / external-display helpers, and timecode generation are runtime-gated and return descriptive errors on unsupported macOS releases.
 - The bundled examples remain headless-safe and intentionally avoid `startRunning` or writing capture files unless the API itself can report the unsupported/not-attached state safely.
 

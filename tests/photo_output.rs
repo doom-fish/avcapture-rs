@@ -5,6 +5,9 @@ use avcapture::prelude::*;
 #[test]
 fn photo_output_smoke() -> common::TestResult {
     let output = PhotoOutput::new()?;
+    let retained_output = output.clone();
+    drop(output);
+    let output = retained_output;
     let info = output.info()?;
     assert_eq!(
         output.output_info()?.connection_count,
@@ -22,10 +25,12 @@ fn photo_output_smoke() -> common::TestResult {
             .map(PhotoOutputCaptureReadiness::as_raw)
     );
     assert!(!output.callback_installed()?);
+    assert!(info.available_raw_photo_pixel_format_types.is_none());
 
     let settings = PhotoSettings::new()?;
     let copied_settings = settings.copy_with_unique_id()?;
     assert_ne!(settings.unique_id()?, copied_settings.unique_id()?);
+    assert!(!settings.info()?.used_for_capture);
     assert_eq!(
         settings.photo_quality_prioritization()?,
         settings.info()?.photo_quality_prioritization

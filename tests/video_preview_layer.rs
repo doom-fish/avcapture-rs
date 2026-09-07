@@ -5,7 +5,14 @@ use avcapture::prelude::*;
 #[test]
 fn video_preview_layer_smoke() -> common::TestResult {
     let session = CaptureSession::new()?;
-    let layer = VideoPreviewLayer::new(&session)?;
+    let layer = match VideoPreviewLayer::new(&session) {
+        Ok(layer) => layer,
+        Err(AVCaptureError::MainThreadRequired(error)) => {
+            common::skip("video preview layer main-thread test", error);
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
     let info = layer.info()?;
     assert!(info.session_attached);
     assert_eq!(layer.video_gravity()?, info.video_gravity);
@@ -14,7 +21,7 @@ fn video_preview_layer_smoke() -> common::TestResult {
     layer.set_video_gravity("resizeAspectFill")?;
     assert_eq!(layer.video_gravity()?, "resizeAspectFill");
 
-    layer.clear_session();
+    layer.clear_session()?;
     assert!(!layer.session_attached()?);
     layer.set_session(&session)?;
     assert!(layer.session_attached()?);

@@ -124,7 +124,7 @@ impl CaptureSessionPreset {
     }
 
     #[must_use]
-    /// Wraps an existing `AVCaptureSessionPreset` pointer.
+    /// Decodes an `AVCaptureSessionPreset` raw value.
     pub fn from_raw(raw: &str) -> Self {
         match raw {
             "photo" => Self::Photo,
@@ -437,7 +437,7 @@ impl CaptureSession {
             if ptr.is_null() {
                 return Err(unsafe { from_swift(ffi::status::SESSION_ERROR, err) });
             }
-            connections.push(CaptureConnection::from_raw(ptr));
+            connections.push(unsafe { CaptureConnection::from_retained_bridge_box(ptr) });
         }
         Ok(connections)
     }

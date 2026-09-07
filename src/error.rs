@@ -1,8 +1,12 @@
 //! Errors produced by the `AVCapture` bridge.
 
 use core::fmt;
+use std::collections::VecDeque;
+use std::sync::{Mutex, OnceLock};
 
 use crate::ffi;
+
+const MAX_CALLBACK_DIAGNOSTICS: usize = 64;
 
 /// Top-level error type returned by fallible APIs in this crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +25,18 @@ pub enum AVCaptureError {
     OutputError(String),
     /// Callback installation failed.
     CallbackError(String),
+    /// A native delegate slot is already owned by another registration.
+    DelegateSlotOccupied(String),
+    /// The requested API is unavailable on the current platform or SDK.
+    UnsupportedPlatform(String),
+    /// The operation must be performed on the main thread.
+    MainThreadRequired(String),
+    /// A recording destination already exists.
+    OutputFileExists(String),
+    /// A callback or future was cancelled before native completion.
+    Cancelled(String),
+    /// The Rust/Swift bridge payload violated the versioned wire contract.
+    BridgeProtocol(String),
     /// A generic operation on an existing object failed.
     OperationFailed(String),
 }
@@ -34,12 +50,58 @@ impl fmt::Display for AVCaptureError {
             Self::SessionError(message) => write!(f, "capture session error: {message}"),
             Self::OutputError(message) => write!(f, "capture output error: {message}"),
             Self::CallbackError(message) => write!(f, "capture callback error: {message}"),
+            Self::DelegateSlotOccupied(message) => {
+                write!(f, "capture delegate slot occupied: {message}")
+            }
+            Self::UnsupportedPlatform(message) => write!(f, "unsupported platform: {message}"),
+            Self::MainThreadRequired(message) => write!(f, "main thread required: {message}"),
+            Self::OutputFileExists(message) => write!(f, "output file exists: {message}"),
+            Self::Cancelled(message) => write!(f, "capture operation cancelled: {message}"),
+            Self::BridgeProtocol(message) => write!(f, "capture bridge protocol error: {message}"),
             Self::OperationFailed(message) => write!(f, "operation failed: {message}"),
         }
     }
 }
 
 impl std::error::Error for AVCaptureError {}
+
+/// An error observed while decoding or dispatching an asynchronous native callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallbackDiagnostic {
+    /// The callback trampoline or stream that observed the error.
+    pub source: String,
+    /// The bridge error that prevented normal event delivery.
+    pub error: AVCaptureError,
+}
+
+static CALLBACK_DIAGNOSTICS: OnceLock<Mutex<VecDeque<CallbackDiagnostic>>> = OnceLock::new();
+
+pub(crate) fn report_callback_error(source: &'static str, error: AVCaptureError) {
+    eprintln!("avcapture callback error in {source}: {error}");
+    let diagnostics = CALLBACK_DIAGNOSTICS.get_or_init(|| Mutex::new(VecDeque::new()));
+    let mut diagnostics = diagnostics
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if diagnostics.len() == MAX_CALLBACK_DIAGNOSTICS {
+        diagnostics.pop_front();
+    }
+    diagnostics.push_back(CallbackDiagnostic {
+        source: source.to_owned(),
+        error,
+    });
+}
+
+/// Removes and returns callback diagnostics accumulated since the previous call.
+pub fn take_callback_diagnostics() -> Vec<CallbackDiagnostic> {
+    let Some(diagnostics) = CALLBACK_DIAGNOSTICS.get() else {
+        return Vec::new();
+    };
+    diagnostics
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .drain(..)
+        .collect()
+}
 
 /// Corresponds to `AVCapture.from_swift`.
 ///
@@ -64,6 +126,12 @@ pub unsafe fn from_swift(status: i32, error_str: *mut core::ffi::c_char) -> AVCa
         ffi::status::SESSION_ERROR => AVCaptureError::SessionError(message),
         ffi::status::OUTPUT_ERROR => AVCaptureError::OutputError(message),
         ffi::status::CALLBACK_ERROR => AVCaptureError::CallbackError(message),
+        ffi::status::DELEGATE_SLOT_OCCUPIED => AVCaptureError::DelegateSlotOccupied(message),
+        ffi::status::UNSUPPORTED_PLATFORM => AVCaptureError::UnsupportedPlatform(message),
+        ffi::status::MAIN_THREAD_REQUIRED => AVCaptureError::MainThreadRequired(message),
+        ffi::status::OUTPUT_FILE_EXISTS => AVCaptureError::OutputFileExists(message),
+        ffi::status::CANCELLED => AVCaptureError::Cancelled(message),
+        ffi::status::BRIDGE_PROTOCOL => AVCaptureError::BridgeProtocol(message),
         ffi::status::OPERATION_FAILED => AVCaptureError::OperationFailed(message),
         _ => AVCaptureError::OperationFailed(format!("unknown status {status}: {message}")),
     }
@@ -101,6 +169,30 @@ mod tests {
             "capture callback error: delegate failed"
         );
         assert_eq!(
+            AVCaptureError::DelegateSlotOccupied("video output".to_owned()).to_string(),
+            "capture delegate slot occupied: video output"
+        );
+        assert_eq!(
+            AVCaptureError::UnsupportedPlatform("pixel formats".to_owned()).to_string(),
+            "unsupported platform: pixel formats"
+        );
+        assert_eq!(
+            AVCaptureError::MainThreadRequired("preview layer".to_owned()).to_string(),
+            "main thread required: preview layer"
+        );
+        assert_eq!(
+            AVCaptureError::OutputFileExists("/tmp/capture.mov".to_owned()).to_string(),
+            "output file exists: /tmp/capture.mov"
+        );
+        assert_eq!(
+            AVCaptureError::Cancelled("photo future dropped".to_owned()).to_string(),
+            "capture operation cancelled: photo future dropped"
+        );
+        assert_eq!(
+            AVCaptureError::BridgeProtocol("schema mismatch".to_owned()).to_string(),
+            "capture bridge protocol error: schema mismatch"
+        );
+        assert_eq!(
             AVCaptureError::OperationFailed("bridge failed".to_owned()).to_string(),
             "operation failed: bridge failed"
         );
@@ -132,6 +224,30 @@ mod tests {
             (
                 ffi::status::CALLBACK_ERROR,
                 AVCaptureError::CallbackError(String::new()),
+            ),
+            (
+                ffi::status::DELEGATE_SLOT_OCCUPIED,
+                AVCaptureError::DelegateSlotOccupied(String::new()),
+            ),
+            (
+                ffi::status::UNSUPPORTED_PLATFORM,
+                AVCaptureError::UnsupportedPlatform(String::new()),
+            ),
+            (
+                ffi::status::MAIN_THREAD_REQUIRED,
+                AVCaptureError::MainThreadRequired(String::new()),
+            ),
+            (
+                ffi::status::OUTPUT_FILE_EXISTS,
+                AVCaptureError::OutputFileExists(String::new()),
+            ),
+            (
+                ffi::status::CANCELLED,
+                AVCaptureError::Cancelled(String::new()),
+            ),
+            (
+                ffi::status::BRIDGE_PROTOCOL,
+                AVCaptureError::BridgeProtocol(String::new()),
             ),
             (
                 ffi::status::OPERATION_FAILED,

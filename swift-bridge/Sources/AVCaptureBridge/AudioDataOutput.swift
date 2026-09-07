@@ -17,9 +17,8 @@ private struct AudioPreviewOutputInfoPayload: Codable {
 }
 
 private final class AudioSampleCallbackBox {
-    let callback: AVCAudioSampleCallback
-    let userData: UnsafeMutableRawPointer?
-    let releaseUserData: AVCDropCallback?
+    private let callback: AVCAudioSampleCallback
+    private let contextOwner: AVCCallbackContextOwner
 
     init(
         callback: @escaping AVCAudioSampleCallback,
@@ -28,28 +27,17 @@ private final class AudioSampleCallbackBox {
         releaseUserData: AVCDropCallback?
     ) {
         self.callback = callback
-        self.userData = userData
-        self.releaseUserData = releaseUserData
-        // Take a +1 on the refcounted Rust callback context for the lifetime of
-        // this box. An in-flight sample callback (dispatched on the capture
-        // queue) retains this box for the duration of `emit`, so the matching
-        // release in `deinit` cannot run — and the context cannot be freed —
-        // until that callback completes. This prevents a use-after-free when
-        // `clearCallback` drops the box while a callback is already in flight.
-        if let userData, let retainUserData {
-            retainUserData(userData)
-        }
-    }
-
-    deinit {
-        if let userData, let releaseUserData {
-            releaseUserData(userData)
-        }
+        contextOwner = AVCCallbackContextOwner(
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: releaseUserData
+        )
     }
 
     func emit(sampleBuffer: CMSampleBuffer) {
+        let contextOwner = self.contextOwner
         let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
-        callback(userData, sampleOpaque)
+        callback(contextOwner.userData, sampleOpaque)
     }
 }
 
@@ -65,16 +53,18 @@ private final class AudioSampleDelegate: NSObject, AVCaptureAudioDataOutputSampl
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        owner?.noteDroppedReasonIfPresent(sampleBuffer)
-        owner?.callbackBox?.emit(sampleBuffer: sampleBuffer)
+        owner?.emitSample(sampleBuffer)
     }
 }
 
 final class AudioDataOutputBox: CaptureOutputBoxBase {
     let audioOutput = AVCaptureAudioDataOutput()
-    fileprivate var callbackBox: AudioSampleCallbackBox?
+    private let callbackLock = NSLock()
+    private let counterLock = NSLock()
+    private let delegateSlot = AVCDelegateSlot("audio sample-buffer delegate")
+    private var callbackBox: AudioSampleCallbackBox?
     private var delegate: AudioSampleDelegate?
-    private var callbackQueue: DispatchQueue?
+    private var callbackQueue: AVCSerialCallbackQueue?
     private var droppedSampleCount = 0
     private var lastDroppedSampleReason: String?
 
@@ -87,9 +77,13 @@ final class AudioDataOutputBox: CaptureOutputBoxBase {
     }
 
     fileprivate func infoPayload() -> AudioDataOutputInfoSnapshot {
-        AudioDataOutputInfoSnapshot(
+        counterLock.lock()
+        let droppedSampleCount = self.droppedSampleCount
+        let lastDroppedSampleReason = self.lastDroppedSampleReason
+        counterLock.unlock()
+        return AudioDataOutputInfoSnapshot(
             connectionCount: audioOutput.connections.count,
-            callbackInstalled: callbackBox != nil,
+            callbackInstalled: delegateSlot.isOccupied,
             audioSettings: avcEncodeAudioSettings(audioOutput.audioSettings),
             droppedSampleCount: droppedSampleCount,
             lastDroppedSampleReason: lastDroppedSampleReason
@@ -98,8 +92,18 @@ final class AudioDataOutputBox: CaptureOutputBoxBase {
 
     func noteDroppedReasonIfPresent(_ sampleBuffer: CMSampleBuffer) {
         guard let reason = avcDroppedSampleReason(from: sampleBuffer) else { return }
+        counterLock.lock()
         droppedSampleCount += 1
         lastDroppedSampleReason = reason
+        counterLock.unlock()
+    }
+
+    fileprivate func emitSample(_ sampleBuffer: CMSampleBuffer) {
+        noteDroppedReasonIfPresent(sampleBuffer)
+        callbackLock.lock()
+        let callbackBox = self.callbackBox
+        callbackLock.unlock()
+        callbackBox?.emit(sampleBuffer: sampleBuffer)
     }
 
     func setCallback(
@@ -108,8 +112,7 @@ final class AudioDataOutputBox: CaptureOutputBoxBase {
         retainUserData: AVCRetainCallback?,
         releaseUserData: AVCDropCallback?,
         queueLabel: String
-    ) {
-        clearCallback()
+    ) throws {
         let box = AudioSampleCallbackBox(
             callback: callback,
             userData: userData,
@@ -117,23 +120,57 @@ final class AudioDataOutputBox: CaptureOutputBoxBase {
             releaseUserData: releaseUserData
         )
         let delegate = AudioSampleDelegate(owner: self)
-        let queue = DispatchQueue(label: queueLabel)
-        audioOutput.setSampleBufferDelegate(delegate, queue: queue)
+        let queue = AVCSerialCallbackQueue(label: queueLabel)
+        try delegateSlot.acquire(box)
+        audioOutput.setSampleBufferDelegate(delegate, queue: queue.queue)
+        callbackLock.lock()
         callbackBox = box
         self.delegate = delegate
         callbackQueue = queue
+        callbackLock.unlock()
     }
 
     func clearCallback() {
-        audioOutput.setSampleBufferDelegate(nil, queue: nil)
-        delegate = nil
-        callbackQueue = nil
-        // Dropping our strong reference here does NOT synchronously free the
-        // Rust context: any in-flight sample callback holds its own strong
-        // reference to the box (via `owner?.callbackBox?.emit`), so the box's
-        // `deinit` — and the matching context release — is deferred until that
-        // callback returns.
-        callbackBox = nil
+        callbackLock.lock()
+        let box = callbackBox
+        let delegate = self.delegate
+        let queue = callbackQueue
+        if let box, delegateSlot.release(box) {
+            callbackBox = nil
+            self.delegate = nil
+            callbackQueue = nil
+        }
+        callbackLock.unlock()
+        guard let delegate else {
+            return
+        }
+        if audioOutput.sampleBufferDelegate === delegate {
+            audioOutput.setSampleBufferDelegate(nil, queue: nil)
+        }
+        queue?.drain()
+    }
+
+    func installStreamDelegate(
+        owner: AnyObject,
+        delegate: AVCaptureAudioDataOutputSampleBufferDelegate,
+        queue: AVCSerialCallbackQueue
+    ) throws {
+        try delegateSlot.acquire(owner)
+        audioOutput.setSampleBufferDelegate(delegate, queue: queue.queue)
+    }
+
+    func removeStreamDelegate(
+        owner: AnyObject,
+        delegate: AVCaptureAudioDataOutputSampleBufferDelegate,
+        queue: AVCSerialCallbackQueue
+    ) {
+        guard delegateSlot.release(owner) else {
+            return
+        }
+        if audioOutput.sampleBufferDelegate === delegate {
+            audioOutput.setSampleBufferDelegate(nil, queue: nil)
+        }
+        queue.drain()
     }
 }
 
@@ -216,14 +253,19 @@ public func av_capture_audio_output_set_sample_buffer_callback(
     }
     let output = avcUnretained(outputPtr, as: AudioDataOutputBox.self)
     let queueLabel = String(cString: queueLabelPtr)
-    output.setCallback(
-        callback: callback,
-        userData: userData,
-        retainUserData: retainUserData,
-        releaseUserData: dropUserData,
-        queueLabel: queueLabel
-    )
-    return AVC_OK
+    do {
+        try output.setCallback(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: dropUserData,
+            queueLabel: queueLabel
+        )
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_CALLBACK_ERROR)
+    }
 }
 
 @_cdecl("av_capture_audio_output_clear_sample_buffer_callback")

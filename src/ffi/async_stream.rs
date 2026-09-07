@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_void};
 
-use super::{AudioSampleCallback, VideoSampleCallback};
+use super::{AudioSampleCallback, DropCallback, VideoDataOutputEventCallback, VideoSampleCallback};
 
 pub type StreamEventCallback =
     unsafe extern "C" fn(kind: i32, payload: *mut c_char, ctx: *mut c_void);
@@ -11,6 +11,12 @@ extern "C" {
         callback: Option<StreamEventCallback>,
         ctx: *mut c_void,
     ) -> *mut c_void;
+    pub fn avcapture_session_running_subscribe_owned(
+        session: *mut c_void,
+        callback: Option<StreamEventCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+    ) -> *mut c_void;
     pub fn avcapture_session_running_unsubscribe(handle: *mut c_void);
 
     pub fn avcapture_session_error_subscribe(
@@ -18,12 +24,24 @@ extern "C" {
         callback: Option<StreamEventCallback>,
         ctx: *mut c_void,
     ) -> *mut c_void;
+    pub fn avcapture_session_error_subscribe_owned(
+        session: *mut c_void,
+        callback: Option<StreamEventCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+    ) -> *mut c_void;
     pub fn avcapture_session_error_unsubscribe(handle: *mut c_void);
 
     pub fn avcapture_session_interruption_subscribe(
         session: *mut c_void,
         callback: Option<StreamEventCallback>,
         ctx: *mut c_void,
+    ) -> *mut c_void;
+    pub fn avcapture_session_interruption_subscribe_owned(
+        session: *mut c_void,
+        callback: Option<StreamEventCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
     ) -> *mut c_void;
     pub fn avcapture_session_interruption_unsubscribe(handle: *mut c_void);
 
@@ -33,13 +51,41 @@ extern "C" {
         callback: Option<VideoSampleCallback>,
         ctx: *mut c_void,
     ) -> *mut c_void;
+    pub fn avcapture_video_sample_subscribe_owned(
+        output: *mut c_void,
+        queue_label: *const c_char,
+        callback: Option<VideoSampleCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+        out_status: *mut i32,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_void;
     pub fn avcapture_video_sample_unsubscribe(handle: *mut c_void);
+    pub fn avcapture_video_data_output_event_subscribe(
+        output: *mut c_void,
+        queue_label: *const c_char,
+        callback: Option<VideoDataOutputEventCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+        out_status: *mut i32,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_void;
+    pub fn avcapture_video_data_output_event_unsubscribe(handle: *mut c_void);
 
     pub fn avcapture_audio_sample_subscribe(
         output: *mut c_void,
         queue_label: *const c_char,
         callback: Option<AudioSampleCallback>,
         ctx: *mut c_void,
+    ) -> *mut c_void;
+    pub fn avcapture_audio_sample_subscribe_owned(
+        output: *mut c_void,
+        queue_label: *const c_char,
+        callback: Option<AudioSampleCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+        out_status: *mut i32,
+        out_error_message: *mut *mut c_char,
     ) -> *mut c_void;
     pub fn avcapture_audio_sample_unsubscribe(handle: *mut c_void);
 
@@ -50,6 +96,18 @@ extern "C" {
         ctx: *mut c_void,
         out_error_message: *mut *mut c_char,
     ) -> *mut c_void;
+    pub fn avcapture_file_recording_stream_start_with_options_owned(
+        output: *mut c_void,
+        path_bytes: *const u8,
+        path_length: usize,
+        overwrite_policy: i32,
+        callback: Option<StreamEventCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+        out_status: *mut i32,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_void;
+    pub fn avcapture_file_recording_stream_request_stop(handle: *mut c_void) -> bool;
     pub fn avcapture_file_recording_stream_stop(handle: *mut c_void);
 
     pub fn avcapture_audio_file_recording_stream_start(
@@ -60,12 +118,33 @@ extern "C" {
         ctx: *mut c_void,
         out_error_message: *mut *mut c_char,
     ) -> *mut c_void;
+    pub fn avcapture_audio_file_recording_stream_start_with_options_owned(
+        output: *mut c_void,
+        path_bytes: *const u8,
+        path_length: usize,
+        output_file_type: *const c_char,
+        overwrite_policy: i32,
+        callback: Option<StreamEventCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+        out_status: *mut i32,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_void;
+    pub fn avcapture_audio_file_recording_stream_request_stop(handle: *mut c_void) -> bool;
     pub fn avcapture_audio_file_recording_stream_stop(handle: *mut c_void);
 
     pub fn avcapture_movie_file_boundary_subscribe(
         output: *mut c_void,
         callback: Option<AudioSampleCallback>,
         ctx: *mut c_void,
+    ) -> *mut c_void;
+    pub fn avcapture_movie_file_boundary_subscribe_owned(
+        output: *mut c_void,
+        callback: Option<AudioSampleCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+        out_status: *mut i32,
+        out_error_message: *mut *mut c_char,
     ) -> *mut c_void;
     pub fn avcapture_movie_file_boundary_unsubscribe(handle: *mut c_void);
 
@@ -74,6 +153,14 @@ extern "C" {
         callback: Option<AudioSampleCallback>,
         ctx: *mut c_void,
     ) -> *mut c_void;
+    pub fn avcapture_audio_file_boundary_subscribe_owned(
+        output: *mut c_void,
+        callback: Option<AudioSampleCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+        out_status: *mut i32,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_void;
     pub fn avcapture_audio_file_boundary_unsubscribe(handle: *mut c_void);
 
     pub fn avcapture_metadata_objects_subscribe(
@@ -81,6 +168,15 @@ extern "C" {
         queue_label: *const c_char,
         callback: Option<StreamEventCallback>,
         ctx: *mut c_void,
+    ) -> *mut c_void;
+    pub fn avcapture_metadata_objects_subscribe_owned(
+        output: *mut c_void,
+        queue_label: *const c_char,
+        callback: Option<StreamEventCallback>,
+        ctx: *mut c_void,
+        release_ctx: Option<DropCallback>,
+        out_status: *mut i32,
+        out_error_message: *mut *mut c_char,
     ) -> *mut c_void;
     pub fn avcapture_metadata_objects_unsubscribe(handle: *mut c_void);
 }

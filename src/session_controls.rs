@@ -5,8 +5,9 @@ use std::ffi::CString;
 
 use serde::{Deserialize, Serialize};
 
+use crate::callback::{ArcContext, SerializedCallback};
 use crate::device::CaptureDevice;
-use crate::error::{from_swift, AVCaptureError};
+use crate::error::{from_swift, report_callback_error, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{cstring, json_cstring, parse_json_and_free};
 
@@ -104,13 +105,8 @@ struct IndexPickerCallbackState {
     callback: Box<dyn FnMut(usize) + Send + 'static>,
 }
 
-struct ControlsDelegateCallbackState {
-    callback: Box<dyn FnMut(CaptureSessionControlsEvent) + Send + 'static>,
-}
-
-struct DeferredStartDelegateCallbackState {
-    callback: Box<dyn FnMut(CaptureSessionDeferredStartEvent) + Send + 'static>,
-}
+type ControlsDelegateCallbackState = SerializedCallback<CaptureSessionControlsEvent>;
+type DeferredStartDelegateCallbackState = SerializedCallback<CaptureSessionDeferredStartEvent>;
 
 #[derive(Debug)]
 /// Wraps `AVCaptureControl`.
@@ -128,7 +124,12 @@ impl Drop for CaptureControl {
 }
 
 impl CaptureControl {
-    pub(crate) const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `CaptureControlBoxBase` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `CaptureControlBoxBase` returned at +1 by this crate's Swift bridge.
+    pub(crate) const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 
@@ -247,7 +248,7 @@ impl CaptureIndexPicker {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 
@@ -287,7 +288,7 @@ impl CaptureIndexPicker {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 
@@ -436,7 +437,7 @@ impl CaptureSlider {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 
@@ -476,7 +477,7 @@ impl CaptureSlider {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 
@@ -517,7 +518,7 @@ impl CaptureSlider {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 
@@ -668,7 +669,7 @@ impl CaptureSystemExposureBiasSlider {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 
@@ -704,7 +705,7 @@ impl CaptureSystemExposureBiasSlider {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 }
@@ -745,7 +746,7 @@ impl CaptureSystemZoomSlider {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 
@@ -781,7 +782,7 @@ impl CaptureSystemZoomSlider {
             ));
         }
         Ok(Self {
-            control: CaptureControl::from_raw(ptr),
+            control: unsafe { CaptureControl::from_retained_bridge_box(ptr) },
         })
     }
 }
@@ -807,7 +808,7 @@ pub(super) fn session_controls(
                 "failed to read capture session control",
             ));
         }
-        controls.push(CaptureControl::from_raw(ptr));
+        controls.push(unsafe { CaptureControl::from_retained_bridge_box(ptr) });
     }
     Ok(controls)
 }
@@ -851,10 +852,8 @@ where
         "avcapture-session-controls",
         "session controls delegate queue label",
     )?;
-    let state = Box::new(ControlsDelegateCallbackState {
-        callback: Box::new(callback),
-    });
-    let userdata = Box::into_raw(state).cast::<c_void>();
+    let state = ArcContext::new(ControlsDelegateCallbackState::new(callback));
+    let userdata = state.as_ptr();
     let mut err: *mut c_char = ptr::null_mut();
     let status = unsafe {
         ffi::session::av_capture_session_set_controls_delegate_callback(
@@ -862,12 +861,12 @@ where
             queue_label.as_ptr(),
             Some(session_controls_delegate_trampoline),
             userdata,
-            Some(session_controls_delegate_callback_drop),
+            Some(session_controls_delegate_callback_retain),
+            Some(session_controls_delegate_callback_release),
             &mut err,
         )
     };
     if status != ffi::status::OK {
-        unsafe { session_controls_delegate_callback_drop(userdata) };
         return Err(error_from_status(
             status,
             err,
@@ -894,10 +893,8 @@ where
         "avcapture-session-deferred-start",
         "session deferred start delegate queue label",
     )?;
-    let state = Box::new(DeferredStartDelegateCallbackState {
-        callback: Box::new(callback),
-    });
-    let userdata = Box::into_raw(state).cast::<c_void>();
+    let state = ArcContext::new(DeferredStartDelegateCallbackState::new(callback));
+    let userdata = state.as_ptr();
     let mut err: *mut c_char = ptr::null_mut();
     let status = unsafe {
         ffi::session::av_capture_session_set_deferred_start_delegate_callback(
@@ -905,12 +902,12 @@ where
             queue_label.as_ptr(),
             Some(session_deferred_start_delegate_trampoline),
             userdata,
-            Some(session_deferred_start_delegate_callback_drop),
+            Some(session_deferred_start_delegate_callback_retain),
+            Some(session_deferred_start_delegate_callback_release),
             &mut err,
         )
     };
     if status != ffi::status::OK {
-        unsafe { session_deferred_start_delegate_callback_drop(userdata) };
         return Err(error_from_status(
             status,
             err,
@@ -928,8 +925,12 @@ unsafe extern "C" fn slider_action_trampoline(userdata: *mut c_void, payload: *m
     let Some(state) = userdata.cast::<SliderCallbackState>().as_mut() else {
         return;
     };
-    let Ok(payload) = parse_json_and_free::<SliderActionPayload>(payload) else {
-        return;
+    let payload = match parse_json_and_free::<SliderActionPayload>(payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            report_callback_error("slider_action_trampoline", error);
+            return;
+        }
     };
     // User closures can panic; catch them here so the panic doesn't unwind
     // across the `extern "C"` boundary (which is UB).
@@ -949,8 +950,12 @@ unsafe extern "C" fn index_picker_action_trampoline(userdata: *mut c_void, paylo
     let Some(state) = userdata.cast::<IndexPickerCallbackState>().as_mut() else {
         return;
     };
-    let Ok(payload) = parse_json_and_free::<IndexPickerActionPayload>(payload) else {
-        return;
+    let payload = match parse_json_and_free::<IndexPickerActionPayload>(payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            report_callback_error("index_picker_action_trampoline", error);
+            return;
+        }
     };
     // User closures can panic; catch them here so the panic doesn't unwind
     // across the `extern "C"` boundary (which is UB).
@@ -970,58 +975,50 @@ unsafe extern "C" fn session_controls_delegate_trampoline(
     userdata: *mut c_void,
     payload: *mut c_char,
 ) {
-    let Some(state) = userdata.cast::<ControlsDelegateCallbackState>().as_mut() else {
+    let Some(state) = ArcContext::<ControlsDelegateCallbackState>::get(userdata) else {
         return;
     };
-    let Ok(event) = parse_json_and_free::<CaptureSessionControlsEvent>(payload) else {
-        return;
+    let event = match parse_json_and_free::<CaptureSessionControlsEvent>(payload) {
+        Ok(event) => event,
+        Err(error) => {
+            report_callback_error("session_controls_delegate_trampoline", error);
+            return;
+        }
     };
-    // User closures can panic; catch them here so the panic doesn't unwind
-    // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("session_controls_delegate_trampoline", || {
-        (state.callback)(event);
-    });
+    state.dispatch("session_controls_delegate_trampoline", event);
 }
 
-unsafe extern "C" fn session_controls_delegate_callback_drop(userdata: *mut c_void) {
-    if userdata.is_null() {
-        return;
-    }
-    drop(Box::from_raw(
-        userdata.cast::<ControlsDelegateCallbackState>(),
-    ));
+unsafe extern "C" fn session_controls_delegate_callback_retain(userdata: *mut c_void) {
+    ArcContext::<ControlsDelegateCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn session_controls_delegate_callback_release(userdata: *mut c_void) {
+    ArcContext::<ControlsDelegateCallbackState>::release(userdata);
 }
 
 unsafe extern "C" fn session_deferred_start_delegate_trampoline(
     userdata: *mut c_void,
     payload: *mut c_char,
 ) {
-    let Some(state) = userdata
-        .cast::<DeferredStartDelegateCallbackState>()
-        .as_mut()
-    else {
+    let Some(state) = ArcContext::<DeferredStartDelegateCallbackState>::get(userdata) else {
         return;
     };
-    let Ok(event) = parse_json_and_free::<CaptureSessionDeferredStartEvent>(payload) else {
-        return;
+    let event = match parse_json_and_free::<CaptureSessionDeferredStartEvent>(payload) {
+        Ok(event) => event,
+        Err(error) => {
+            report_callback_error("session_deferred_start_delegate_trampoline", error);
+            return;
+        }
     };
-    // User closures can panic; catch them here so the panic doesn't unwind
-    // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic(
-        "session_deferred_start_delegate_trampoline",
-        || {
-            (state.callback)(event);
-        },
-    );
+    state.dispatch("session_deferred_start_delegate_trampoline", event);
 }
 
-unsafe extern "C" fn session_deferred_start_delegate_callback_drop(userdata: *mut c_void) {
-    if userdata.is_null() {
-        return;
-    }
-    drop(Box::from_raw(
-        userdata.cast::<DeferredStartDelegateCallbackState>(),
-    ));
+unsafe extern "C" fn session_deferred_start_delegate_callback_retain(userdata: *mut c_void) {
+    ArcContext::<DeferredStartDelegateCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn session_deferred_start_delegate_callback_release(userdata: *mut c_void) {
+    ArcContext::<DeferredStartDelegateCallbackState>::release(userdata);
 }
 
 fn validate_slider_bounds(min_value: f32, max_value: f32) -> Result<(), AVCaptureError> {

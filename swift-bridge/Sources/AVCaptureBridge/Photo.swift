@@ -2,24 +2,27 @@ import AVFoundation
 import Foundation
 
 private struct PhotoSettingsInfoPayload: Codable {
-    let uniqueId: Int64
+    let uniqueID: Int64
     let processedFileType: String?
     let flashMode: Int32?
     let photoQualityPrioritization: Int32?
+    let usedForCapture: Bool
 }
 
 struct ResolvedPhotoSettingsInfoPayload: Codable {
-    let uniqueId: Int64
+    let uniqueID: Int64
     let photoDimensions: VideoDimensionsPayload
     let expectedPhotoCount: Int
     let fastCapturePrioritizationEnabled: Bool?
 }
 
 private struct PhotoInfoPayload: Codable {
-    let uniqueId: Int64
+    let uniqueID: Int64
     let timestamp: CMTimePayload
     let photoCount: Int
     let pixelBufferAvailable: Bool
+    let pixelBufferPixelFormat: UInt32?
+    let pixelBufferDimensions: VideoDimensionsPayload?
     let constantColorConfidenceMapAvailable: Bool?
     let constantColorCenterWeightedMeanConfidenceLevel: Float?
     let constantColorFallbackPhoto: Bool?
@@ -28,9 +31,40 @@ private struct PhotoInfoPayload: Codable {
 
 final class PhotoSettingsBox: NSObject {
     let settings: AVCapturePhotoSettings
+    private let lock = NSLock()
+    private var usedForCapture = false
 
     init(_ settings: AVCapturePhotoSettings = AVCapturePhotoSettings()) {
         self.settings = settings
+    }
+
+    func consumeForCapture() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !usedForCapture else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "photo settings have already been used for capture; create a copy with a new unique ID"
+            )
+        }
+        usedForCapture = true
+    }
+
+    func ensureMutable() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !usedForCapture else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "photo settings cannot be changed after they have been used for capture"
+            )
+        }
+    }
+
+    var hasBeenUsedForCapture: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return usedForCapture
     }
 }
 
@@ -54,7 +88,8 @@ private func avcResolvedPhotoSettingsBox(_ ptr: UnsafeMutableRawPointer) -> Reso
     avcUnretained(ptr, as: ResolvedPhotoSettingsBox.self)
 }
 
-private func photoSettingsInfoPayload(from settings: AVCapturePhotoSettings) -> PhotoSettingsInfoPayload {
+private func photoSettingsInfoPayload(from box: PhotoSettingsBox) -> PhotoSettingsInfoPayload {
+    let settings = box.settings
     let flashMode: Int32?
     if #available(macOS 13.0, *) {
         flashMode = Int32(settings.flashMode.rawValue)
@@ -68,10 +103,11 @@ private func photoSettingsInfoPayload(from settings: AVCapturePhotoSettings) -> 
         photoQualityPrioritization = nil
     }
     return PhotoSettingsInfoPayload(
-        uniqueId: settings.uniqueID,
+        uniqueID: settings.uniqueID,
         processedFileType: settings.processedFileType?.rawValue,
         flashMode: flashMode,
-        photoQualityPrioritization: photoQualityPrioritization
+        photoQualityPrioritization: photoQualityPrioritization,
+        usedForCapture: box.hasBeenUsedForCapture
     )
 }
 
@@ -85,7 +121,7 @@ func resolvedPhotoSettingsInfoPayload(
         fastCapturePrioritizationEnabled = nil
     }
     return ResolvedPhotoSettingsInfoPayload(
-        uniqueId: resolvedSettings.uniqueID,
+        uniqueID: resolvedSettings.uniqueID,
         photoDimensions: VideoDimensionsPayload(resolvedSettings.photoDimensions),
         expectedPhotoCount: resolvedSettings.expectedPhotoCount,
         fastCapturePrioritizationEnabled: fastCapturePrioritizationEnabled
@@ -93,6 +129,7 @@ func resolvedPhotoSettingsInfoPayload(
 }
 
 private func photoInfoPayload(from photo: AVCapturePhoto) -> PhotoInfoPayload {
+    let pixelBuffer = photo.pixelBuffer
     let constantColorConfidenceMapAvailable: Bool?
     let constantColorCenterWeightedMeanConfidenceLevel: Float?
     let constantColorFallbackPhoto: Bool?
@@ -106,10 +143,19 @@ private func photoInfoPayload(from photo: AVCapturePhoto) -> PhotoInfoPayload {
         constantColorFallbackPhoto = nil
     }
     return PhotoInfoPayload(
-        uniqueId: photo.resolvedSettings.uniqueID,
+        uniqueID: photo.resolvedSettings.uniqueID,
         timestamp: CMTimePayload(photo.timestamp),
         photoCount: photo.photoCount,
-        pixelBufferAvailable: photo.pixelBuffer != nil,
+        pixelBufferAvailable: pixelBuffer != nil,
+        pixelBufferPixelFormat: pixelBuffer.map(CVPixelBufferGetPixelFormatType),
+        pixelBufferDimensions: pixelBuffer.map {
+            VideoDimensionsPayload(
+                CMVideoDimensions(
+                    width: Int32(CVPixelBufferGetWidth($0)),
+                    height: Int32(CVPixelBufferGetHeight($0))
+                )
+            )
+        },
         constantColorConfidenceMapAvailable: constantColorConfidenceMapAvailable,
         constantColorCenterWeightedMeanConfidenceLevel: constantColorCenterWeightedMeanConfidenceLevel,
         constantColorFallbackPhoto: constantColorFallbackPhoto,
@@ -143,7 +189,7 @@ public func av_capture_photo_settings_info_json(
     _ settingsPtr: UnsafeMutableRawPointer,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> UnsafeMutablePointer<CChar>? {
-    let settings = avcPhotoSettingsBox(settingsPtr).settings
+    let settings = avcPhotoSettingsBox(settingsPtr)
     do {
         return ffiString(try avcEncodeJSON(photoSettingsInfoPayload(from: settings)))
     } catch {
@@ -166,8 +212,15 @@ public func av_capture_photo_settings_set_flash_mode(
         outErrorMessage?.pointee = ffiString("unsupported flash mode: \(modeRaw)")
         return AVC_INVALID_ARGUMENT
     }
-    avcPhotoSettingsBox(settingsPtr).settings.flashMode = mode
-    return AVC_OK
+    let box = avcPhotoSettingsBox(settingsPtr)
+    do {
+        try box.ensureMutable()
+        box.settings.flashMode = mode
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_INVALID_ARGUMENT)
+    }
 }
 
 @_cdecl("av_capture_photo_settings_set_photo_quality_prioritization")
@@ -184,8 +237,15 @@ public func av_capture_photo_settings_set_photo_quality_prioritization(
         outErrorMessage?.pointee = ffiString("unsupported photo quality prioritization: \(prioritizationRaw)")
         return AVC_INVALID_ARGUMENT
     }
-    avcPhotoSettingsBox(settingsPtr).settings.photoQualityPrioritization = prioritization
-    return AVC_OK
+    let box = avcPhotoSettingsBox(settingsPtr)
+    do {
+        try box.ensureMutable()
+        box.settings.photoQualityPrioritization = prioritization
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_INVALID_ARGUMENT)
+    }
 }
 
 @_cdecl("av_capture_resolved_photo_settings_release")
@@ -234,4 +294,40 @@ public func av_capture_photo_resolved_settings(
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> UnsafeMutableRawPointer? {
     avcRetain(ResolvedPhotoSettingsBox(avcPhotoBox(photoPtr).photo.resolvedSettings))
+}
+
+@_cdecl("av_capture_photo_pixel_buffer")
+public func av_capture_photo_pixel_buffer(
+    _ photoPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutableRawPointer? {
+    guard let pixelBuffer = avcPhotoBox(photoPtr).photo.pixelBuffer else {
+        return nil
+    }
+    return Unmanaged.passRetained(pixelBuffer).toOpaque()
+}
+
+@_cdecl("av_capture_photo_file_data_representation")
+public func av_capture_photo_file_data_representation(
+    _ photoPtr: UnsafeMutableRawPointer,
+    _ outLength: UnsafeMutablePointer<Int>,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> UnsafeMutablePointer<UInt8>? {
+    guard let data = avcPhotoBox(photoPtr).photo.fileDataRepresentation() else {
+        outLength.pointee = 0
+        return nil
+    }
+    guard !data.isEmpty else {
+        outLength.pointee = 0
+        return nil
+    }
+    let bytes = UnsafeMutablePointer<UInt8>.allocate(capacity: data.count)
+    data.copyBytes(to: bytes, count: data.count)
+    outLength.pointee = data.count
+    return bytes
+}
+
+@_cdecl("av_capture_photo_file_data_free")
+public func av_capture_photo_file_data_free(_ bytes: UnsafeMutablePointer<UInt8>?) {
+    bytes?.deallocate()
 }

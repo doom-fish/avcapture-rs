@@ -10,17 +10,21 @@ use apple_cf::cm::CMSampleBuffer;
 use apple_cf::cv::CVPixelBuffer;
 use doom_fish_utils::completion::{AsyncCompletion, AsyncCompletionFuture};
 use doom_fish_utils::stream::{AsyncStreamSender, BoundedAsyncStream};
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use crate::error::{from_swift, AVCaptureError};
-use crate::helpers::cstring;
+use crate::callback::ArcContext;
+use crate::error::{from_swift, report_callback_error, AVCaptureError};
+use crate::helpers::{cstring, parse_bridge_json};
 use crate::{ffi, CaptureRect, MetadataObject};
+
+const AVC_STREAM_BRIDGE_ERROR_KIND: i32 = -1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Event payload derived from `AVCaptureSession` callbacks.
@@ -134,6 +138,7 @@ struct SessionErrorPayload {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FileRecordingPayload {
+    #[serde(rename = "fileURL", alias = "fileUrl")]
     file_url: String,
     error: Option<String>,
 }
@@ -162,14 +167,72 @@ impl From<MetadataObjectPayload> for MetadataObject {
     }
 }
 
-const fn capture_bridge_err(msg: String) -> AVCaptureError {
+fn capture_bridge_err(msg: String) -> AVCaptureError {
+    if let Some(message) = msg.strip_prefix("capture operation cancelled: ") {
+        return AVCaptureError::Cancelled(message.to_owned());
+    }
     AVCaptureError::OperationFailed(msg)
+}
+
+struct PhotoFutureSignal<T> {
+    context: usize,
+    completed: AtomicBool,
+    _marker: std::marker::PhantomData<fn(T)>,
+}
+
+impl<T> PhotoFutureSignal<T> {
+    fn new(context: *mut c_void) -> Self {
+        Self {
+            context: context as usize,
+            completed: AtomicBool::new(false),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    fn complete(&self, result: Result<T, AVCaptureError>) {
+        if self.completed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        unsafe {
+            match result {
+                Ok(value) => AsyncCompletion::complete_ok(self.context as *mut c_void, value),
+                Err(error) => {
+                    AsyncCompletion::<T>::complete_err(
+                        self.context as *mut c_void,
+                        error.to_string(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn cancel(&self) {
+        self.complete(Err(AVCaptureError::Cancelled(
+            "photo capture future was cancelled; the native capture continues to final cleanup"
+                .to_owned(),
+        )));
+    }
+}
+
+impl<T> Drop for PhotoFutureSignal<T> {
+    fn drop(&mut self) {
+        if !self.completed.swap(true, Ordering::AcqRel) {
+            unsafe {
+                AsyncCompletion::<T>::complete_err(
+                    self.context as *mut c_void,
+                    "photo capture completion owner was dropped".to_owned(),
+                );
+            }
+        }
+    }
 }
 
 /// Future returned by [`PhotoCaptureEventFuture::start`] and
 /// [`PhotoCaptureEventFuture::start_with_settings`].
 pub struct PhotoCaptureEventFuture {
     inner: AsyncCompletionFuture<crate::PhotoCaptureEvent>,
+    signal: Arc<PhotoFutureSignal<crate::PhotoCaptureEvent>>,
+    output: Option<crate::PhotoOutput>,
 }
 
 impl std::fmt::Debug for PhotoCaptureEventFuture {
@@ -194,11 +257,33 @@ impl PhotoCaptureEventFuture {
         settings: &crate::PhotoSettings,
     ) -> Result<Self, AVCaptureError> {
         let (inner, ctx) = AsyncCompletion::create();
-        let ctx = ctx as usize;
-        output.capture_photo_with_settings(settings, move |event| unsafe {
-            AsyncCompletion::complete_ok(ctx as *mut c_void, event);
-        })?;
-        Ok(Self { inner })
+        let signal = Arc::new(PhotoFutureSignal::new(ctx));
+        let callback_signal = Arc::clone(&signal);
+        if let Err(error) = output.capture_photo_with_settings_result(settings, move |result| {
+            callback_signal.complete(result);
+        }) {
+            signal.complete(Err(error.clone()));
+            return Err(error);
+        }
+        Ok(Self {
+            inner,
+            signal,
+            output: Some(output.clone()),
+        })
+    }
+
+    /// Stops waiting for the result. The native capture itself continues until
+    /// its delegate receives the final completion callback.
+    pub fn cancel(&mut self) {
+        self.signal.cancel();
+        self.output = None;
+    }
+}
+
+impl Drop for PhotoCaptureEventFuture {
+    fn drop(&mut self) {
+        self.signal.cancel();
+        self.output = None;
     }
 }
 
@@ -206,9 +291,11 @@ impl Future for PhotoCaptureEventFuture {
     type Output = Result<crate::PhotoCaptureEvent, AVCaptureError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.inner)
-            .poll(cx)
-            .map(|result| result.map_err(capture_bridge_err))
+        let result = Pin::new(&mut self.inner).poll(cx);
+        if result.is_ready() {
+            self.output = None;
+        }
+        result.map(|result| result.map_err(capture_bridge_err))
     }
 }
 
@@ -216,6 +303,8 @@ impl Future for PhotoCaptureEventFuture {
 /// [`PhotoCaptureResultFuture::start_with_settings`].
 pub struct PhotoCaptureResultFuture {
     inner: AsyncCompletionFuture<crate::PhotoCaptureResult>,
+    signal: Arc<PhotoFutureSignal<crate::PhotoCaptureResult>>,
+    output: Option<crate::PhotoOutput>,
 }
 
 impl std::fmt::Debug for PhotoCaptureResultFuture {
@@ -229,12 +318,8 @@ impl PhotoCaptureResultFuture {
     /// Starts a default-settings `AVCapturePhotoOutput` capture and resolves to
     /// the final success result.
     pub fn start(output: &crate::PhotoOutput) -> Result<Self, AVCaptureError> {
-        let (inner, ctx) = AsyncCompletion::create();
-        let ctx = ctx as usize;
-        output.capture_photo(move |result| unsafe {
-            AsyncCompletion::complete_ok(ctx as *mut c_void, result);
-        })?;
-        Ok(Self { inner })
+        let settings = crate::PhotoSettings::new()?;
+        Self::start_with_settings(output, &settings)
     }
 
     /// Starts a capture with caller-provided settings and resolves to the final
@@ -244,17 +329,36 @@ impl PhotoCaptureResultFuture {
         settings: &crate::PhotoSettings,
     ) -> Result<Self, AVCaptureError> {
         let (inner, ctx) = AsyncCompletion::create();
-        let ctx = ctx as usize;
-        output.capture_photo_with_settings(settings, move |event| unsafe {
-            AsyncCompletion::complete_ok(
-                ctx as *mut c_void,
-                crate::PhotoCaptureResult {
-                    unique_id: event.unique_id,
-                    error: event.error,
-                },
-            );
-        })?;
-        Ok(Self { inner })
+        let signal = Arc::new(PhotoFutureSignal::new(ctx));
+        let callback_signal = Arc::clone(&signal);
+        if let Err(error) = output.capture_photo_with_settings_result(settings, move |result| {
+            callback_signal.complete(result.map(|event| crate::PhotoCaptureResult {
+                unique_id: event.unique_id,
+                error: event.error,
+            }));
+        }) {
+            signal.complete(Err(error.clone()));
+            return Err(error);
+        }
+        Ok(Self {
+            inner,
+            signal,
+            output: Some(output.clone()),
+        })
+    }
+
+    /// Stops waiting for the result. The native capture itself continues until
+    /// its delegate receives the final completion callback.
+    pub fn cancel(&mut self) {
+        self.signal.cancel();
+        self.output = None;
+    }
+}
+
+impl Drop for PhotoCaptureResultFuture {
+    fn drop(&mut self) {
+        self.signal.cancel();
+        self.output = None;
     }
 }
 
@@ -262,7 +366,11 @@ impl Future for PhotoCaptureResultFuture {
     type Output = Result<crate::PhotoCaptureResult, AVCaptureError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.inner).poll(cx).map(|result| {
+        let result = Pin::new(&mut self.inner).poll(cx);
+        if result.is_ready() {
+            self.output = None;
+        }
+        result.map(|result| {
             let result = result.map_err(capture_bridge_err)?;
             if let Some(error) = result.error.clone() {
                 return Err(AVCaptureError::OperationFailed(error));
@@ -306,42 +414,6 @@ impl Drop for StreamHandle {
 unsafe impl Send for StreamHandle {}
 unsafe impl Sync for StreamHandle {}
 
-#[derive(Debug)]
-struct SenderBox<T>(*mut AsyncStreamSender<T>);
-
-impl<T> SenderBox<T> {
-    fn new(sender: AsyncStreamSender<T>) -> Self {
-        Self(Box::into_raw(Box::new(sender)))
-    }
-
-    const fn as_ptr(&self) -> *mut AsyncStreamSender<T> {
-        self.0
-    }
-}
-
-impl<T> Drop for SenderBox<T> {
-    fn drop(&mut self) {
-        if self.0.is_null() {
-            return;
-        }
-        // SAFETY: `self.0` was allocated by `Box::into_raw(Box::new(sender))`
-        // in `SenderBox::new` and is owned exclusively by this wrapper. It is
-        // non-null (checked above) and has not been freed before (this is the
-        // only drop site). After reconstituting the `Box` it is immediately
-        // dropped, so there is no double-free.
-        unsafe { drop(Box::from_raw(self.0)) };
-        self.0 = std::ptr::null_mut();
-    }
-}
-
-// SAFETY: `SenderBox<T>` owns a heap-allocated `AsyncStreamSender<T>` behind a
-// raw pointer. `AsyncStreamSender<T>` is `Send` when `T: Send`, so transferring
-// a `SenderBox<T>` to another thread is safe under the same condition.
-// `Sync` is also sound: no two threads can observe the interior pointer
-// simultaneously because the only mutable use is in `drop(&mut self)`.
-unsafe impl<T: Send> Send for SenderBox<T> {}
-unsafe impl<T: Send> Sync for SenderBox<T> {}
-
 macro_rules! impl_stream_common {
     ($ty:ident, $event:ty) => {
         impl $ty {
@@ -368,24 +440,14 @@ macro_rules! impl_stream_common {
     };
 }
 
-fn stream_parts<T>(capacity: usize) -> (BoundedAsyncStream<T>, SenderBox<T>, *mut c_void) {
+fn stream_parts<T>(capacity: usize) -> (BoundedAsyncStream<T>, *mut c_void) {
     let (inner, sender) = BoundedAsyncStream::new(capacity);
-    let sender_box = SenderBox::new(sender);
-    let ctx = sender_box.as_ptr().cast::<c_void>();
-    (inner, sender_box, ctx)
+    let ctx = ArcContext::new(sender).into_raw();
+    (inner, ctx)
 }
 
 unsafe fn sender_from_ctx<T>(ctx: *mut c_void) -> Option<&'static AsyncStreamSender<T>> {
-    // SAFETY: `ctx` is the `SenderBox::as_ptr()` cast to `*mut c_void` stored
-    // when the stream was subscribed. The `SenderBox` is kept alive for the
-    // entire lifetime of the subscription (it lives inside the stream struct
-    // alongside the `StreamHandle`, and the handle is dropped before the box).
-    // The `'static` lifetime is safe because we only ever access this reference
-    // while the SenderBox is alive — any call that reaches here happens within
-    // an active Swift delegate callback, and the Swift bridge drains in-flight
-    // callbacks before releasing the bridge object (see AsyncStream.swift deinit),
-    // which in turn means the SenderBox is still live.
-    ctx.cast::<AsyncStreamSender<T>>().as_ref()
+    ArcContext::<AsyncStreamSender<T>>::get(ctx)
 }
 
 unsafe fn take_json_str(payload: *mut c_char) -> String {
@@ -401,11 +463,37 @@ unsafe fn take_json_str(payload: *mut c_char) -> String {
     s
 }
 
-unsafe fn parse_json_payload<T: DeserializeOwned>(payload: *mut c_char) -> Option<T> {
+unsafe fn parse_json_payload<T: serde::de::DeserializeOwned>(
+    payload: *mut c_char,
+) -> Result<T, AVCaptureError> {
     // SAFETY: delegates to `take_json_str` which upholds all pointer invariants.
     let json = take_json_str(payload);
-    serde_json::from_str(&json).ok()
+    parse_bridge_json(&json)
 }
+
+macro_rules! stream_context_release {
+    ($name:ident, $event:ty) => {
+        unsafe extern "C" fn $name(ctx: *mut c_void) {
+            ArcContext::<AsyncStreamSender<$event>>::release(ctx);
+        }
+    };
+}
+
+stream_context_release!(release_session_running_ctx, SessionRunningEvent);
+stream_context_release!(release_session_error_ctx, SessionErrorEvent);
+stream_context_release!(release_session_interruption_ctx, InterruptionEvent);
+stream_context_release!(release_video_sample_ctx, VideoSampleBufferEvent);
+stream_context_release!(
+    release_video_data_output_event_ctx,
+    crate::VideoDataOutputEvent
+);
+stream_context_release!(release_audio_sample_ctx, AudioSampleBufferEvent);
+stream_context_release!(release_file_recording_ctx, FileRecordingStreamEvent);
+stream_context_release!(
+    release_file_output_sample_buffer_ctx,
+    FileOutputSampleBufferEvent
+);
+stream_context_release!(release_metadata_objects_ctx, MetadataObjectsStreamEvent);
 
 unsafe fn unsubscribe_session_running(handle: *mut c_void) {
     // SAFETY: `handle` is the non-null pointer returned by
@@ -426,6 +514,11 @@ unsafe fn unsubscribe_session_interruption(handle: *mut c_void) {
 unsafe fn unsubscribe_video_sample(handle: *mut c_void) {
     // SAFETY: same contract as `unsubscribe_session_running`.
     ffi::async_stream::avcapture_video_sample_unsubscribe(handle);
+}
+
+unsafe fn unsubscribe_video_data_output_event(handle: *mut c_void) {
+    // SAFETY: same contract as `unsubscribe_session_running`.
+    ffi::async_stream::avcapture_video_data_output_event_unsubscribe(handle);
 }
 
 unsafe fn unsubscribe_audio_sample(handle: *mut c_void) {
@@ -470,18 +563,28 @@ const fn file_recording_kind(kind: i32) -> Option<FileRecordingKind> {
 }
 
 /// # Safety
-/// Called by the Swift bridge from any thread. `ctx` is the `SenderBox` raw
-/// pointer held alive for the duration of the subscription. `payload` is either
-/// null or an owned C string allocated by Swift.
-unsafe extern "C" fn session_running_cb(kind: i32, _payload: *mut c_char, ctx: *mut c_void) {
+/// Called by the Swift bridge from any thread. `ctx` is an independently
+/// retained `Arc<AsyncStreamSender<_>>` owned by the native callback owner.
+unsafe extern "C" fn session_running_cb(kind: i32, payload: *mut c_char, ctx: *mut c_void) {
     let Some(sender) = sender_from_ctx::<SessionRunningEvent>(ctx) else {
+        let _ = take_json_str(payload);
         return;
     };
     let event = match kind {
         0 => SessionRunningEvent::Started,
         1 => SessionRunningEvent::Stopped,
-        _ => return,
+        unknown => {
+            let detail = take_json_str(payload);
+            report_callback_error(
+                "session_running_cb",
+                AVCaptureError::BridgeProtocol(format!(
+                    "unknown session running event kind {unknown}: {detail}"
+                )),
+            );
+            return;
+        }
     };
+    let _ = take_json_str(payload);
     sender.push(event);
 }
 
@@ -495,11 +598,26 @@ unsafe extern "C" fn session_error_cb(kind: i32, payload: *mut c_char, ctx: *mut
         return;
     };
     if kind != 0 {
+        if kind == -1 {
+            report_callback_error(
+                "session_error_cb",
+                AVCaptureError::BridgeProtocol(take_json_str(payload)),
+            );
+            return;
+        }
         let _ = take_json_str(payload);
+        report_callback_error(
+            "session_error_cb",
+            AVCaptureError::BridgeProtocol(format!("unknown session error event kind {kind}")),
+        );
         return;
     }
-    let Some(payload) = parse_json_payload::<SessionErrorPayload>(payload) else {
-        return;
+    let payload = match parse_json_payload::<SessionErrorPayload>(payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            report_callback_error("session_error_cb", error);
+            return;
+        }
     };
     sender.push(SessionErrorEvent {
         description: payload.error_description,
@@ -508,15 +626,26 @@ unsafe extern "C" fn session_error_cb(kind: i32, payload: *mut c_char, ctx: *mut
 
 /// # Safety
 /// Same contract as `session_running_cb`.
-unsafe extern "C" fn session_interruption_cb(kind: i32, _payload: *mut c_char, ctx: *mut c_void) {
+unsafe extern "C" fn session_interruption_cb(kind: i32, payload: *mut c_char, ctx: *mut c_void) {
     let Some(sender) = sender_from_ctx::<InterruptionEvent>(ctx) else {
+        let _ = take_json_str(payload);
         return;
     };
     let kind = match kind {
         0 => InterruptionKind::Interrupted,
         1 => InterruptionKind::InterruptionEnded,
-        _ => return,
+        unknown => {
+            let detail = take_json_str(payload);
+            report_callback_error(
+                "session_interruption_cb",
+                AVCaptureError::BridgeProtocol(format!(
+                    "unknown session interruption event kind {unknown}: {detail}"
+                )),
+            );
+            return;
+        }
     };
+    let _ = take_json_str(payload);
     sender.push(InterruptionEvent { kind });
 }
 
@@ -527,13 +656,14 @@ unsafe extern "C" fn session_interruption_cb(kind: i32, _payload: *mut c_char, c
 /// Both are consumed (released) by the `CMSampleBuffer`/`CVPixelBuffer` drop
 /// impls, either immediately (early returns) or when the event is eventually
 /// popped or displaced from the `BoundedAsyncStream` ring buffer.
+#[allow(unused_unsafe)]
 unsafe extern "C" fn video_sample_cb(
     ctx: *mut c_void,
     sample_buffer: *mut c_void,
     pixel_buffer: *mut c_void,
 ) {
-    let sample = CMSampleBuffer::from_raw(sample_buffer);
-    let pixel = CVPixelBuffer::from_raw(pixel_buffer);
+    let sample = unsafe { CMSampleBuffer::from_raw(sample_buffer) };
+    let pixel = unsafe { CVPixelBuffer::from_raw(pixel_buffer) };
     let Some(sender) = sender_from_ctx::<VideoSampleBufferEvent>(ctx) else {
         drop(sample);
         drop(pixel);
@@ -548,11 +678,60 @@ unsafe extern "C" fn video_sample_cb(
     });
 }
 
+#[allow(unused_unsafe)]
+unsafe extern "C" fn video_data_output_event_cb(
+    ctx: *mut c_void,
+    kind: i32,
+    sample_buffer: *mut c_void,
+    pixel_buffer: *mut c_void,
+    dropped_reason: *mut c_char,
+    dropped_total: u64,
+) {
+    let sample = unsafe { CMSampleBuffer::from_raw(sample_buffer) };
+    let pixel = unsafe { CVPixelBuffer::from_raw(pixel_buffer) };
+    let reason = if dropped_reason.is_null() {
+        None
+    } else {
+        Some(crate::AVCaptureOutputDataDroppedReason::from_raw(
+            take_json_str(dropped_reason),
+        ))
+    };
+    let Some(sender) = sender_from_ctx::<crate::VideoDataOutputEvent>(ctx) else {
+        drop(sample);
+        drop(pixel);
+        return;
+    };
+    let event = match (kind, sample) {
+        (0, Some(sample_buffer)) => crate::VideoDataOutputEvent::Sample {
+            sample_buffer,
+            pixel_buffer: pixel,
+        },
+        (1, Some(sample_buffer)) => crate::VideoDataOutputEvent::Dropped {
+            sample_buffer,
+            reason,
+            total: dropped_total,
+        },
+        (unknown, sample_buffer) => {
+            drop(sample_buffer);
+            drop(pixel);
+            report_callback_error(
+                "video_data_output_event_cb",
+                AVCaptureError::BridgeProtocol(format!(
+                    "unknown video data output stream event kind {unknown}"
+                )),
+            );
+            return;
+        }
+    };
+    sender.push(event);
+}
+
 /// # Safety
 /// Same as `video_sample_cb` but audio-only. `sample_buffer` is a
 /// `CMSampleBufferRef` at +1 retain.
+#[allow(unused_unsafe)]
 unsafe extern "C" fn audio_sample_cb(ctx: *mut c_void, sample_buffer: *mut c_void) {
-    let sample = CMSampleBuffer::from_raw(sample_buffer);
+    let sample = unsafe { CMSampleBuffer::from_raw(sample_buffer) };
     let Some(sender) = sender_from_ctx::<AudioSampleBufferEvent>(ctx) else {
         drop(sample);
         return;
@@ -566,8 +745,9 @@ unsafe extern "C" fn audio_sample_cb(ctx: *mut c_void, sample_buffer: *mut c_voi
 /// # Safety
 /// Same as `audio_sample_cb`, but used for file-output sample-buffer boundary
 /// delivery.
+#[allow(unused_unsafe)]
 unsafe extern "C" fn file_output_sample_buffer_cb(ctx: *mut c_void, sample_buffer: *mut c_void) {
-    let sample = CMSampleBuffer::from_raw(sample_buffer);
+    let sample = unsafe { CMSampleBuffer::from_raw(sample_buffer) };
     let Some(sender) = sender_from_ctx::<FileOutputSampleBufferEvent>(ctx) else {
         drop(sample);
         return;
@@ -585,12 +765,27 @@ unsafe extern "C" fn file_recording_cb(kind: i32, payload: *mut c_char, ctx: *mu
         let _ = take_json_str(payload);
         return;
     };
+    if kind == AVC_STREAM_BRIDGE_ERROR_KIND {
+        report_callback_error(
+            "file_recording_cb",
+            AVCaptureError::BridgeProtocol(take_json_str(payload)),
+        );
+        return;
+    }
     let Some(kind) = file_recording_kind(kind) else {
         let _ = take_json_str(payload);
+        report_callback_error(
+            "file_recording_cb",
+            AVCaptureError::BridgeProtocol(format!("unknown file recording event kind {kind}")),
+        );
         return;
     };
-    let Some(payload) = parse_json_payload::<FileRecordingPayload>(payload) else {
-        return;
+    let payload = match parse_json_payload::<FileRecordingPayload>(payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            report_callback_error("file_recording_cb", error);
+            return;
+        }
     };
     sender.push(FileRecordingStreamEvent {
         kind,
@@ -607,11 +802,26 @@ unsafe extern "C" fn metadata_objects_cb(kind: i32, payload: *mut c_char, ctx: *
         return;
     };
     if kind != 0 {
+        if kind == AVC_STREAM_BRIDGE_ERROR_KIND {
+            report_callback_error(
+                "metadata_objects_cb",
+                AVCaptureError::BridgeProtocol(take_json_str(payload)),
+            );
+            return;
+        }
         let _ = take_json_str(payload);
+        report_callback_error(
+            "metadata_objects_cb",
+            AVCaptureError::BridgeProtocol(format!("unknown metadata event kind {kind}")),
+        );
         return;
     }
-    let Some(payload) = parse_json_payload::<MetadataObjectsPayload>(payload) else {
-        return;
+    let payload = match parse_json_payload::<MetadataObjectsPayload>(payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            report_callback_error("metadata_objects_cb", error);
+            return;
+        }
     };
     sender.push(MetadataObjectsStreamEvent {
         objects: payload.objects.into_iter().map(Into::into).collect(),
@@ -622,19 +832,19 @@ unsafe extern "C" fn metadata_objects_cb(kind: i32, payload: *mut c_char, ctx: *
 /// Async stream of events sourced from `AVCaptureSession`.
 pub struct SessionRunningStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<SessionRunningEvent>,
     inner: BoundedAsyncStream<SessionRunningEvent>,
 }
 
 impl SessionRunningStream {
     /// Subscribes to `AVCaptureSession` updates with the given buffer capacity.
     pub fn subscribe(session: &crate::CaptureSession, capacity: usize) -> Self {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
+        let (inner, ctx) = stream_parts(capacity);
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_session_running_subscribe(
+            ffi::async_stream::avcapture_session_running_subscribe_owned(
                 session.ptr,
                 Some(session_running_cb),
                 ctx,
+                Some(release_session_running_ctx),
             )
         };
         assert!(
@@ -643,7 +853,6 @@ impl SessionRunningStream {
         );
         Self {
             _handle: StreamHandle::new(handle_ptr, unsubscribe_session_running),
-            _sender_box: sender_box,
             inner,
         }
     }
@@ -655,19 +864,19 @@ impl_stream_common!(SessionRunningStream, SessionRunningEvent);
 /// Async stream of events sourced from `AVCaptureSession`.
 pub struct SessionErrorStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<SessionErrorEvent>,
     inner: BoundedAsyncStream<SessionErrorEvent>,
 }
 
 impl SessionErrorStream {
     /// Subscribes to `AVCaptureSession` updates with the given buffer capacity.
     pub fn subscribe(session: &crate::CaptureSession, capacity: usize) -> Self {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
+        let (inner, ctx) = stream_parts(capacity);
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_session_error_subscribe(
+            ffi::async_stream::avcapture_session_error_subscribe_owned(
                 session.ptr,
                 Some(session_error_cb),
                 ctx,
+                Some(release_session_error_ctx),
             )
         };
         assert!(
@@ -676,7 +885,6 @@ impl SessionErrorStream {
         );
         Self {
             _handle: StreamHandle::new(handle_ptr, unsubscribe_session_error),
-            _sender_box: sender_box,
             inner,
         }
     }
@@ -688,19 +896,19 @@ impl_stream_common!(SessionErrorStream, SessionErrorEvent);
 /// Async stream of events sourced from `AVCaptureSession`.
 pub struct SessionInterruptionStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<InterruptionEvent>,
     inner: BoundedAsyncStream<InterruptionEvent>,
 }
 
 impl SessionInterruptionStream {
     /// Subscribes to `AVCaptureSession` updates with the given buffer capacity.
     pub fn subscribe(session: &crate::CaptureSession, capacity: usize) -> Self {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
+        let (inner, ctx) = stream_parts(capacity);
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_session_interruption_subscribe(
+            ffi::async_stream::avcapture_session_interruption_subscribe_owned(
                 session.ptr,
                 Some(session_interruption_cb),
                 ctx,
+                Some(release_session_interruption_ctx),
             )
         };
         assert!(
@@ -709,7 +917,6 @@ impl SessionInterruptionStream {
         );
         Self {
             _handle: StreamHandle::new(handle_ptr, unsubscribe_session_interruption),
-            _sender_box: sender_box,
             inner,
         }
     }
@@ -721,69 +928,131 @@ impl_stream_common!(SessionInterruptionStream, InterruptionEvent);
 /// Async stream of events sourced from `AVCaptureVideoDataOutput`.
 pub struct VideoSampleBufferStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<VideoSampleBufferEvent>,
     inner: BoundedAsyncStream<VideoSampleBufferEvent>,
 }
 
 impl VideoSampleBufferStream {
     /// Subscribes to `AVCaptureVideoDataOutput` updates with the given buffer capacity.
+    ///
+    /// # Panics
+    ///
+    /// Panics if another handler or stream owns the native delegate slot. Use
+    /// [`Self::try_subscribe`] to receive a typed error instead.
     pub fn subscribe(output: &crate::VideoDataOutput, capacity: usize) -> Self {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
+        Self::try_subscribe(output, capacity)
+            .expect("video sample-buffer delegate slot is already occupied")
+    }
+
+    /// Tries to subscribe without replacing an existing native delegate owner.
+    pub fn try_subscribe(
+        output: &crate::VideoDataOutput,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = stream_parts(capacity);
         let queue_label =
             CString::new("avcapture-async-video-stream").expect("queue label is valid");
+        let mut status = ffi::status::OK;
+        let mut err = std::ptr::null_mut();
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_video_sample_subscribe(
+            ffi::async_stream::avcapture_video_sample_subscribe_owned(
                 output.ptr,
                 queue_label.as_ptr(),
                 Some(video_sample_cb),
                 ctx,
+                Some(release_video_sample_ctx),
+                &mut status,
+                &mut err,
             )
         };
-        assert!(
-            !handle_ptr.is_null(),
-            "video sample stream subscribe failed"
-        );
-        Self {
-            _handle: StreamHandle::new(handle_ptr, unsubscribe_video_sample),
-            _sender_box: sender_box,
-            inner,
+        if handle_ptr.is_null() {
+            return Err(unsafe { from_swift(status, err) });
         }
+        Ok(Self {
+            _handle: StreamHandle::new(handle_ptr, unsubscribe_video_sample),
+            inner,
+        })
     }
 }
 
 impl_stream_common!(VideoSampleBufferStream, VideoSampleBufferEvent);
 
 #[derive(Debug)]
+/// Opt-in async stream of video samples and native dropped-frame events.
+pub struct VideoDataOutputEventStream {
+    _handle: StreamHandle,
+    inner: BoundedAsyncStream<crate::VideoDataOutputEvent>,
+}
+
+impl VideoDataOutputEventStream {
+    /// Subscribes to sample and dropped-frame events without replacing another delegate owner.
+    pub fn subscribe(
+        output: &crate::VideoDataOutput,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = stream_parts(capacity);
+        let queue_label =
+            CString::new("avcapture-async-video-event-stream").expect("queue label is valid");
+        let mut status = ffi::status::OK;
+        let mut err = std::ptr::null_mut();
+        let handle_ptr = unsafe {
+            ffi::async_stream::avcapture_video_data_output_event_subscribe(
+                output.ptr,
+                queue_label.as_ptr(),
+                Some(video_data_output_event_cb),
+                ctx,
+                Some(release_video_data_output_event_ctx),
+                &mut status,
+                &mut err,
+            )
+        };
+        if handle_ptr.is_null() {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(Self {
+            _handle: StreamHandle::new(handle_ptr, unsubscribe_video_data_output_event),
+            inner,
+        })
+    }
+}
+
+impl_stream_common!(VideoDataOutputEventStream, crate::VideoDataOutputEvent);
+
+#[derive(Debug)]
 /// Async stream of events sourced from `AVCaptureAudioDataOutput`.
 pub struct AudioSampleBufferStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<AudioSampleBufferEvent>,
     inner: BoundedAsyncStream<AudioSampleBufferEvent>,
 }
 
 impl AudioSampleBufferStream {
     /// Subscribes to `AVCaptureAudioDataOutput` updates with the given buffer capacity.
-    pub fn subscribe(output: &crate::AudioDataOutput, capacity: usize) -> Self {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
+    pub fn subscribe(
+        output: &crate::AudioDataOutput,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = stream_parts(capacity);
         let queue_label =
             CString::new("avcapture-async-audio-stream").expect("queue label is valid");
+        let mut status = ffi::status::OK;
+        let mut err = std::ptr::null_mut();
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_audio_sample_subscribe(
+            ffi::async_stream::avcapture_audio_sample_subscribe_owned(
                 output.ptr,
                 queue_label.as_ptr(),
                 Some(audio_sample_cb),
                 ctx,
+                Some(release_audio_sample_ctx),
+                &mut status,
+                &mut err,
             )
         };
-        assert!(
-            !handle_ptr.is_null(),
-            "audio sample stream subscribe failed"
-        );
-        Self {
-            _handle: StreamHandle::new(handle_ptr, unsubscribe_audio_sample),
-            _sender_box: sender_box,
-            inner,
+        if handle_ptr.is_null() {
+            return Err(unsafe { from_swift(status, err) });
         }
+        Ok(Self {
+            _handle: StreamHandle::new(handle_ptr, unsubscribe_audio_sample),
+            inner,
+        })
     }
 }
 
@@ -793,7 +1062,6 @@ impl_stream_common!(AudioSampleBufferStream, AudioSampleBufferEvent);
 /// Async stream of events sourced from `AVCaptureMovieFileOutput`.
 pub struct FileRecordingStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<FileRecordingStreamEvent>,
     inner: BoundedAsyncStream<FileRecordingStreamEvent>,
 }
 
@@ -804,26 +1072,58 @@ impl FileRecordingStream {
         path: &Path,
         capacity: usize,
     ) -> Result<Self, AVCaptureError> {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
-        let path = cstring(&path.to_string_lossy(), "movie file output path")?;
+        Self::start_with_options(output, path, crate::RecordingOptions::default(), capacity)
+    }
+
+    /// Starts recording with explicit destination handling options.
+    pub fn start_with_options(
+        output: &crate::MovieFileOutput,
+        path: &Path,
+        options: crate::RecordingOptions,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let path = crate::movie_file_output::output_path_bytes(path, "movie file output path")?;
+        let (inner, ctx) = stream_parts(capacity);
         let mut err: *mut c_char = std::ptr::null_mut();
+        let mut status = ffi::status::OK;
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_file_recording_stream_start(
+            ffi::async_stream::avcapture_file_recording_stream_start_with_options_owned(
                 output.ptr,
                 path.as_ptr(),
+                path.len(),
+                options.overwrite_policy as i32,
                 Some(file_recording_cb),
                 ctx,
+                Some(release_file_recording_ctx),
+                &mut status,
                 &mut err,
             )
         };
         if handle_ptr.is_null() {
-            return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
+            return Err(unsafe { from_swift(status, err) });
         }
         Ok(Self {
             _handle: StreamHandle::new(handle_ptr, stop_file_recording),
-            _sender_box: sender_box,
             inner,
         })
+    }
+
+    /// Requests stop and waits for the native finalization callback.
+    pub async fn stop_and_finalize(self) -> Result<FileRecordingStreamEvent, AVCaptureError> {
+        unsafe {
+            ffi::async_stream::avcapture_file_recording_stream_request_stop(self._handle.ptr);
+        }
+        while let Some(event) = self.inner.next().await {
+            if event.kind == FileRecordingKind::Finished {
+                if let Some(error) = event.error.clone() {
+                    return Err(AVCaptureError::OutputError(error));
+                }
+                return Ok(event);
+            }
+        }
+        Err(AVCaptureError::OperationFailed(
+            "recording stream closed before native finalization".to_owned(),
+        ))
     }
 }
 
@@ -833,7 +1133,6 @@ impl_stream_common!(FileRecordingStream, FileRecordingStreamEvent);
 /// Async stream of events sourced from `AVCaptureAudioFileOutput`.
 pub struct AudioFileRecordingStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<FileRecordingStreamEvent>,
     inner: BoundedAsyncStream<FileRecordingStreamEvent>,
 }
 
@@ -845,28 +1144,67 @@ impl AudioFileRecordingStream {
         output_file_type: &str,
         capacity: usize,
     ) -> Result<Self, AVCaptureError> {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
-        let path = cstring(&path.to_string_lossy(), "audio file output path")?;
+        Self::start_with_options(
+            output,
+            path,
+            output_file_type,
+            crate::RecordingOptions::default(),
+            capacity,
+        )
+    }
+
+    /// Starts recording with explicit destination handling options.
+    pub fn start_with_options(
+        output: &crate::AudioFileOutput,
+        path: &Path,
+        output_file_type: &str,
+        options: crate::RecordingOptions,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let path = crate::movie_file_output::output_path_bytes(path, "audio file output path")?;
         let output_file_type = cstring(output_file_type, "audio file output type")?;
+        let (inner, ctx) = stream_parts(capacity);
         let mut err: *mut c_char = std::ptr::null_mut();
+        let mut status = ffi::status::OK;
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_audio_file_recording_stream_start(
+            ffi::async_stream::avcapture_audio_file_recording_stream_start_with_options_owned(
                 output.ptr,
                 path.as_ptr(),
+                path.len(),
                 output_file_type.as_ptr(),
+                options.overwrite_policy as i32,
                 Some(file_recording_cb),
                 ctx,
+                Some(release_file_recording_ctx),
+                &mut status,
                 &mut err,
             )
         };
         if handle_ptr.is_null() {
-            return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
+            return Err(unsafe { from_swift(status, err) });
         }
         Ok(Self {
             _handle: StreamHandle::new(handle_ptr, stop_audio_file_recording),
-            _sender_box: sender_box,
             inner,
         })
+    }
+
+    /// Requests stop and waits for the native finalization callback.
+    pub async fn stop_and_finalize(self) -> Result<FileRecordingStreamEvent, AVCaptureError> {
+        unsafe {
+            ffi::async_stream::avcapture_audio_file_recording_stream_request_stop(self._handle.ptr);
+        }
+        while let Some(event) = self.inner.next().await {
+            if event.kind == FileRecordingKind::Finished {
+                if let Some(error) = event.error.clone() {
+                    return Err(AVCaptureError::OutputError(error));
+                }
+                return Ok(event);
+            }
+        }
+        Err(AVCaptureError::OperationFailed(
+            "audio recording stream closed before native finalization".to_owned(),
+        ))
     }
 }
 
@@ -876,30 +1214,35 @@ impl_stream_common!(AudioFileRecordingStream, FileRecordingStreamEvent);
 /// Async stream of file-output sample-buffer boundary events sourced from `AVCaptureMovieFileOutput`.
 pub struct MovieFileSampleBufferBoundaryStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<FileOutputSampleBufferEvent>,
     inner: BoundedAsyncStream<FileOutputSampleBufferEvent>,
 }
 
 impl MovieFileSampleBufferBoundaryStream {
     /// Subscribes to `AVCaptureMovieFileOutput` sample-buffer boundary callbacks.
-    pub fn subscribe(output: &crate::MovieFileOutput, capacity: usize) -> Self {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
+    pub fn subscribe(
+        output: &crate::MovieFileOutput,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = stream_parts(capacity);
+        let mut status = ffi::status::OK;
+        let mut err = std::ptr::null_mut();
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_movie_file_boundary_subscribe(
+            ffi::async_stream::avcapture_movie_file_boundary_subscribe_owned(
                 output.ptr,
                 Some(file_output_sample_buffer_cb),
                 ctx,
+                Some(release_file_output_sample_buffer_ctx),
+                &mut status,
+                &mut err,
             )
         };
-        assert!(
-            !handle_ptr.is_null(),
-            "movie file boundary stream subscribe failed"
-        );
-        Self {
-            _handle: StreamHandle::new(handle_ptr, unsubscribe_movie_file_boundary),
-            _sender_box: sender_box,
-            inner,
+        if handle_ptr.is_null() {
+            return Err(unsafe { from_swift(status, err) });
         }
+        Ok(Self {
+            _handle: StreamHandle::new(handle_ptr, unsubscribe_movie_file_boundary),
+            inner,
+        })
     }
 }
 
@@ -912,30 +1255,35 @@ impl_stream_common!(
 /// Async stream of file-output sample-buffer boundary events sourced from `AVCaptureAudioFileOutput`.
 pub struct AudioFileSampleBufferBoundaryStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<FileOutputSampleBufferEvent>,
     inner: BoundedAsyncStream<FileOutputSampleBufferEvent>,
 }
 
 impl AudioFileSampleBufferBoundaryStream {
     /// Subscribes to `AVCaptureAudioFileOutput` sample-buffer boundary callbacks.
-    pub fn subscribe(output: &crate::AudioFileOutput, capacity: usize) -> Self {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
+    pub fn subscribe(
+        output: &crate::AudioFileOutput,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = stream_parts(capacity);
+        let mut status = ffi::status::OK;
+        let mut err = std::ptr::null_mut();
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_audio_file_boundary_subscribe(
+            ffi::async_stream::avcapture_audio_file_boundary_subscribe_owned(
                 output.ptr,
                 Some(file_output_sample_buffer_cb),
                 ctx,
+                Some(release_file_output_sample_buffer_ctx),
+                &mut status,
+                &mut err,
             )
         };
-        assert!(
-            !handle_ptr.is_null(),
-            "audio file boundary stream subscribe failed"
-        );
-        Self {
-            _handle: StreamHandle::new(handle_ptr, unsubscribe_audio_file_boundary),
-            _sender_box: sender_box,
-            inner,
+        if handle_ptr.is_null() {
+            return Err(unsafe { from_swift(status, err) });
         }
+        Ok(Self {
+            _handle: StreamHandle::new(handle_ptr, unsubscribe_audio_file_boundary),
+            inner,
+        })
     }
 }
 
@@ -984,34 +1332,68 @@ impl_stream_common!(
 /// Async stream of events sourced from `AVCaptureMetadataOutput`.
 pub struct MetadataObjectsStream {
     _handle: StreamHandle,
-    _sender_box: SenderBox<MetadataObjectsStreamEvent>,
     inner: BoundedAsyncStream<MetadataObjectsStreamEvent>,
 }
 
 impl MetadataObjectsStream {
     /// Subscribes to `AVCaptureMetadataOutput` updates with the given buffer capacity.
-    pub fn subscribe(output: &crate::MetadataOutput, capacity: usize) -> Self {
-        let (inner, sender_box, ctx) = stream_parts(capacity);
+    pub fn subscribe(
+        output: &crate::MetadataOutput,
+        capacity: usize,
+    ) -> Result<Self, AVCaptureError> {
+        let (inner, ctx) = stream_parts(capacity);
         let queue_label =
             CString::new("avcapture-async-metadata-stream").expect("queue label is valid");
+        let mut status = ffi::status::OK;
+        let mut err = std::ptr::null_mut();
         let handle_ptr = unsafe {
-            ffi::async_stream::avcapture_metadata_objects_subscribe(
+            ffi::async_stream::avcapture_metadata_objects_subscribe_owned(
                 output.ptr,
                 queue_label.as_ptr(),
                 Some(metadata_objects_cb),
                 ctx,
+                Some(release_metadata_objects_ctx),
+                &mut status,
+                &mut err,
             )
         };
-        assert!(
-            !handle_ptr.is_null(),
-            "metadata objects stream subscribe failed"
-        );
-        Self {
-            _handle: StreamHandle::new(handle_ptr, unsubscribe_metadata_objects),
-            _sender_box: sender_box,
-            inner,
+        if handle_ptr.is_null() {
+            return Err(unsafe { from_swift(status, err) });
         }
+        Ok(Self {
+            _handle: StreamHandle::new(handle_ptr, unsubscribe_metadata_objects),
+            inner,
+        })
     }
 }
 
 impl_stream_common!(MetadataObjectsStream, MetadataObjectsStreamEvent);
+
+#[cfg(test)]
+mod tests {
+    use super::{capture_bridge_err, PhotoFutureSignal};
+    use doom_fish_utils::completion::AsyncCompletion;
+    use std::sync::Arc;
+
+    #[test]
+    fn photo_future_cancellation_completes_context_once() {
+        let (future, context) = AsyncCompletion::<u32>::create();
+        let signal = Arc::new(PhotoFutureSignal::<u32>::new(context));
+        signal.cancel();
+        signal.cancel();
+
+        let error = pollster::block_on(future).expect_err("cancelled future should fail");
+        assert!(error.contains("cancelled"));
+    }
+
+    #[test]
+    fn photo_future_cancellation_maps_to_typed_error() {
+        assert!(matches!(
+            capture_bridge_err(
+                "capture operation cancelled: native capture continues".to_owned()
+            ),
+            crate::AVCaptureError::Cancelled(message)
+                if message == "native capture continues"
+        ));
+    }
+}

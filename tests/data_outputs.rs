@@ -10,6 +10,13 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct WireEnvelope<T> {
+    schema_version: u64,
+    payload: T,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RawCaptureOutputInfo {
     connection_count: usize,
     deferred_start_supported: Option<bool>,
@@ -20,6 +27,7 @@ struct RawCaptureOutputInfo {
 #[serde(rename_all = "camelCase")]
 struct RawAudioPreviewOutputInfo {
     connection_count: usize,
+    #[serde(rename = "outputDeviceUniqueID")]
     output_device_unique_id: Option<String>,
     volume: f32,
 }
@@ -27,7 +35,10 @@ struct RawAudioPreviewOutputInfo {
 unsafe fn decode_json<T: DeserializeOwned>(json_ptr: *mut c_char) -> T {
     let json = CStr::from_ptr(json_ptr).to_string_lossy().into_owned();
     ffi::core::avc_string_free(json_ptr);
-    serde_json::from_str(&json).expect("bridge returned invalid JSON")
+    let envelope: WireEnvelope<T> =
+        serde_json::from_str(&json).expect("bridge returned invalid JSON");
+    assert_eq!(envelope.schema_version, 1);
+    envelope.payload
 }
 
 #[test]
@@ -39,6 +50,10 @@ fn data_outputs_smoke() -> common::TestResult {
         .set_sample_buffer_handler(Some("avcapture-test-video"), |_sample, _pixel_buffer| {})?;
     assert!(video_output.callback_installed()?);
     let video_info = video_output.info()?;
+    assert!(
+        !video_info.available_video_cv_pixel_format_types.is_empty(),
+        "macOS should report native video pixel-format capabilities"
+    );
     assert_eq!(
         video_output.dropped_sample_count()?,
         video_info.dropped_sample_count
@@ -126,7 +141,7 @@ fn dropped_reason_wrapper_deserializes_known_and_unknown_values() {
         r#"{
             "connectionCount": 0,
             "alwaysDiscardsLateVideoFrames": true,
-            "availableVideoCvPixelFormatTypes": [],
+            "availableVideoCVPixelFormatTypes": [],
             "callbackInstalled": false,
             "videoSettings": null,
             "droppedSampleCount": 2,

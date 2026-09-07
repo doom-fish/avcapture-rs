@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_void};
 
 use apple_cf::cm::CMTime;
 
-use super::{AudioSampleCallback, DropCallback, JsonCallback};
+use super::{AudioSampleCallback, DropCallback, JsonCallback, RetainCallback};
 
 extern "C" {
     pub fn av_capture_movie_file_output_create(out_error_message: *mut *mut c_char) -> *mut c_void;
@@ -13,9 +13,12 @@ extern "C" {
     ) -> *mut c_char;
     pub fn av_capture_movie_file_output_start_recording(
         output: *mut c_void,
-        output_path: *const c_char,
+        output_path_bytes: *const u8,
+        output_path_length: usize,
+        overwrite_policy: i32,
         callback: Option<JsonCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;
@@ -23,11 +26,12 @@ extern "C" {
         output: *mut c_void,
         callback: Option<AudioSampleCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;
     pub fn av_capture_movie_file_output_clear_sample_buffer_boundary_callback(output: *mut c_void);
-    pub fn av_capture_movie_file_output_stop_recording(output: *mut c_void);
+    pub fn av_capture_movie_file_output_stop_recording(output: *mut c_void) -> bool;
     pub fn av_capture_movie_file_output_pause_recording(output: *mut c_void);
     pub fn av_capture_movie_file_output_resume_recording(output: *mut c_void);
     pub fn av_capture_movie_file_output_set_max_recorded_duration(
@@ -62,10 +66,13 @@ extern "C" {
     ) -> i32;
     pub fn av_capture_audio_file_output_start_recording(
         output: *mut c_void,
-        output_path: *const c_char,
+        output_path_bytes: *const u8,
+        output_path_length: usize,
         output_file_type: *const c_char,
+        overwrite_policy: i32,
         callback: Option<JsonCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;
@@ -73,11 +80,12 @@ extern "C" {
         output: *mut c_void,
         callback: Option<AudioSampleCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;
     pub fn av_capture_audio_file_output_clear_sample_buffer_boundary_callback(output: *mut c_void);
-    pub fn av_capture_audio_file_output_stop_recording(output: *mut c_void);
+    pub fn av_capture_audio_file_output_stop_recording(output: *mut c_void) -> bool;
     pub fn av_capture_audio_file_output_pause_recording(output: *mut c_void);
     pub fn av_capture_audio_file_output_resume_recording(output: *mut c_void);
     pub fn av_capture_audio_file_output_set_max_recorded_duration(
@@ -89,4 +97,14 @@ extern "C" {
         output: *mut c_void,
         bytes: i64,
     );
+
+    #[cfg(test)]
+    pub fn av_capture_recording_destination_finalize_for_testing(
+        path_bytes: *const u8,
+        path_length: usize,
+        overwrite_policy: i32,
+        native_error_mode: i32,
+        out_had_error: *mut bool,
+        out_error_message: *mut *mut c_char,
+    ) -> i32;
 }

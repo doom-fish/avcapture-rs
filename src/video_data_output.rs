@@ -2,7 +2,7 @@
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use std::ffi::CStr;
 use std::ffi::CString;
 
 use apple_cf::cm::CMSampleBuffer;
@@ -19,6 +19,8 @@ pub use self::timecode_support::{
     TimecodeMetadataSampleBuffer,
 };
 
+use crate::callback::{ArcContext, SerializedCallback};
+use crate::error::report_callback_error;
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{optional_json_cstring, parse_json_and_free};
@@ -70,6 +72,10 @@ pub struct VideoDataOutputInfo {
     pub connection_count: usize,
     /// The always discards late video frames reported by `AVCaptureVideoDataOutput`.
     pub always_discards_late_video_frames: bool,
+    #[serde(
+        rename = "availableVideoCVPixelFormatTypes",
+        alias = "availableVideoCvPixelFormatTypes"
+    )]
     /// The available video cv pixel format types reported by `AVCaptureVideoDataOutput`.
     pub available_video_cv_pixel_format_types: Vec<u32>,
     /// The callback installed reported by `AVCaptureVideoDataOutput`.
@@ -82,41 +88,29 @@ pub struct VideoDataOutputInfo {
     pub last_dropped_sample_reason: Option<AVCaptureOutputDataDroppedReason>,
 }
 
-struct VideoCallbackState {
-    callback: Box<dyn FnMut(CMSampleBuffer, Option<CVPixelBuffer>) + Send + 'static>,
-    ref_count: AtomicUsize,
+#[derive(Debug, Clone)]
+/// Event delivered by `AVCaptureVideoDataOutputSampleBufferDelegate`.
+pub enum VideoDataOutputEvent {
+    /// A captured video sample and its image buffer, when present.
+    Sample {
+        /// The retained sample buffer.
+        sample_buffer: CMSampleBuffer,
+        /// The retained image buffer associated with the sample.
+        pixel_buffer: Option<CVPixelBuffer>,
+    },
+    /// A frame dropped by the native capture pipeline.
+    Dropped {
+        /// The retained dropped-frame sample buffer.
+        sample_buffer: CMSampleBuffer,
+        /// The native drop reason, when one was supplied.
+        reason: Option<AVCaptureOutputDataDroppedReason>,
+        /// Total dropped frames observed by this output.
+        total: u64,
+    },
 }
 
-impl VideoCallbackState {
-    /// Increment the reference count.
-    ///
-    /// # Safety
-    ///
-    /// `ptr` must point to a valid, live `VideoCallbackState`.
-    unsafe fn retain(ptr: *mut Self) {
-        unsafe { &*ptr }.ref_count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Decrement the reference count, freeing the state if it reaches zero.
-    ///
-    /// # Safety
-    ///
-    /// `ptr` must point to a valid, live `VideoCallbackState`. After this call,
-    /// `ptr` must not be used if the state was freed.
-    unsafe fn release(ptr: *mut Self) {
-        if ptr.is_null() {
-            return;
-        }
-        let prev = unsafe { &*ptr }.ref_count.fetch_sub(1, Ordering::Release);
-        if prev == 1 {
-            // Acquire fence pairs with the Release stores of every other thread
-            // that previously held a reference, so the freeing thread observes
-            // all their writes. This is the canonical Arc-style refcount drop.
-            core::sync::atomic::fence(Ordering::Acquire);
-            drop(unsafe { Box::from_raw(ptr) });
-        }
-    }
-}
+type VideoSampleCallbackState = SerializedCallback<(CMSampleBuffer, Option<CVPixelBuffer>)>;
+type VideoEventCallbackState = SerializedCallback<VideoDataOutputEvent>;
 
 /// Safe wrapper around `AVCaptureVideoDataOutput`.
 #[derive(Debug)]
@@ -139,6 +133,8 @@ impl CaptureOutputRef for VideoDataOutput {
         self.ptr
     }
 }
+
+impl crate::output::sealed::Sealed for VideoDataOutput {}
 
 impl VideoDataOutput {
     /// Creates a new `AVCaptureVideoDataOutput` wrapper.
@@ -233,7 +229,7 @@ impl VideoDataOutput {
     pub fn set_sample_buffer_handler<F>(
         &self,
         queue_label: Option<&str>,
-        callback: F,
+        mut callback: F,
     ) -> Result<(), AVCaptureError>
     where
         F: FnMut(CMSampleBuffer, Option<CVPixelBuffer>) + Send + 'static,
@@ -242,11 +238,10 @@ impl VideoDataOutput {
         let queue_label = CString::new(queue_label).map_err(|error| {
             AVCaptureError::InvalidArgument(format!("queue label contains NUL byte: {error}"))
         })?;
-        let state = Box::new(VideoCallbackState {
-            callback: Box::new(callback),
-            ref_count: AtomicUsize::new(1),
-        });
-        let userdata = Box::into_raw(state).cast::<c_void>();
+        let state = ArcContext::new(VideoSampleCallbackState::new(
+            move |(sample_buffer, pixel_buffer)| callback(sample_buffer, pixel_buffer),
+        ));
+        let userdata = state.as_ptr();
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::video_data_output::av_capture_video_output_set_sample_buffer_callback(
@@ -254,16 +249,44 @@ impl VideoDataOutput {
                 queue_label.as_ptr(),
                 Some(video_sample_trampoline),
                 userdata,
-                Some(video_callback_retain),
-                Some(video_callback_release),
+                Some(video_sample_callback_retain),
+                Some(video_sample_callback_release),
                 &mut err,
             )
         };
-        // On success the Swift callback box took a +1 via `video_callback_retain`;
-        // drop our creation reference so the state is owned solely by Swift and is
-        // freed only once the box's `deinit` runs (after any in-flight callback).
-        // On error Swift never retained, so this releases the final reference.
-        unsafe { video_callback_release(userdata) };
+        if status != ffi::status::OK {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(())
+    }
+
+    /// Sets a handler that receives both captured samples and native dropped-frame events.
+    pub fn set_sample_buffer_event_handler<F>(
+        &self,
+        queue_label: Option<&str>,
+        callback: F,
+    ) -> Result<(), AVCaptureError>
+    where
+        F: FnMut(VideoDataOutputEvent) + Send + 'static,
+    {
+        let queue_label = queue_label.unwrap_or("avcapture-video-output");
+        let queue_label = CString::new(queue_label).map_err(|error| {
+            AVCaptureError::InvalidArgument(format!("queue label contains NUL byte: {error}"))
+        })?;
+        let state = ArcContext::new(VideoEventCallbackState::new(callback));
+        let userdata = state.as_ptr();
+        let mut err: *mut c_char = ptr::null_mut();
+        let status = unsafe {
+            ffi::video_data_output::av_capture_video_output_set_sample_buffer_event_callback(
+                self.ptr,
+                queue_label.as_ptr(),
+                Some(video_event_trampoline),
+                userdata,
+                Some(video_event_callback_retain),
+                Some(video_event_callback_release),
+                &mut err,
+            )
+        };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
         }
@@ -276,47 +299,145 @@ impl VideoDataOutput {
             ffi::video_data_output::av_capture_video_output_clear_sample_buffer_callback(self.ptr);
         }
     }
+
+    /// Clears the sample and dropped-frame event handler on `AVCaptureVideoDataOutput`.
+    pub fn clear_sample_buffer_event_handler(&self) {
+        unsafe {
+            ffi::video_data_output::av_capture_video_output_clear_sample_buffer_event_callback(
+                self.ptr,
+            );
+        }
+    }
 }
 
+#[allow(unused_unsafe)]
 unsafe extern "C" fn video_sample_trampoline(
     userdata: *mut c_void,
     sample_buffer: *mut c_void,
     pixel_buffer: *mut c_void,
 ) {
-    // SAFETY: `userdata` is the `Box<VideoCallbackState>` cast to `*mut c_void`
-    // in `set_sample_buffer_handler`. It is non-null and properly aligned for
-    // the entire lifetime of this callback registration.
-    let Some(state) = userdata.cast::<VideoCallbackState>().as_mut() else {
+    let sample_buffer = unsafe { CMSampleBuffer::from_raw(sample_buffer) };
+    let pixel_buffer = unsafe { CVPixelBuffer::from_raw(pixel_buffer) };
+    let Some(state) = ArcContext::<VideoSampleCallbackState>::get(userdata) else {
+        drop(sample_buffer);
+        drop(pixel_buffer);
         return;
     };
-    // SAFETY: `sample_buffer` is a `CMSampleBufferRef` at +1 retain passed from
-    // the Swift bridge via `Unmanaged.passRetained(...).toOpaque()`.
-    let Some(sample_buffer) = CMSampleBuffer::from_raw(sample_buffer) else {
+    let Some(sample_buffer) = sample_buffer else {
         return;
     };
-    let pixel_buffer = CVPixelBuffer::from_raw(pixel_buffer);
-    // User closures can panic; catch them here so the panic doesn't unwind
-    // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("video_sample_trampoline", || {
-        (state.callback)(sample_buffer, pixel_buffer);
-    });
+    state.dispatch("video_sample_trampoline", (sample_buffer, pixel_buffer));
 }
 
-unsafe extern "C" fn video_callback_retain(userdata: *mut c_void) {
+#[allow(unused_unsafe)]
+unsafe extern "C" fn video_event_trampoline(
+    userdata: *mut c_void,
+    kind: i32,
+    sample_buffer: *mut c_void,
+    pixel_buffer: *mut c_void,
+    dropped_reason: *mut c_char,
+    dropped_total: u64,
+) {
+    let sample_buffer = unsafe { CMSampleBuffer::from_raw(sample_buffer) };
+    let pixel_buffer = unsafe { CVPixelBuffer::from_raw(pixel_buffer) };
+    let reason = if dropped_reason.is_null() {
+        None
+    } else {
+        let reason = CStr::from_ptr(dropped_reason)
+            .to_string_lossy()
+            .into_owned();
+        ffi::core::avc_string_free(dropped_reason);
+        Some(AVCaptureOutputDataDroppedReason::from_raw(reason))
+    };
+    let Some(state) = ArcContext::<VideoEventCallbackState>::get(userdata) else {
+        drop(sample_buffer);
+        drop(pixel_buffer);
+        return;
+    };
+    let event = match (kind, sample_buffer) {
+        (0, Some(sample_buffer)) => VideoDataOutputEvent::Sample {
+            sample_buffer,
+            pixel_buffer,
+        },
+        (1, Some(sample_buffer)) => VideoDataOutputEvent::Dropped {
+            sample_buffer,
+            reason,
+            total: dropped_total,
+        },
+        (unknown, sample_buffer) => {
+            drop(sample_buffer);
+            drop(pixel_buffer);
+            report_callback_error(
+                "video_event_trampoline",
+                AVCaptureError::BridgeProtocol(format!(
+                    "unknown video sample event kind {unknown}"
+                )),
+            );
+            return;
+        }
+    };
+    state.dispatch("video_event_trampoline", event);
+}
+
+unsafe extern "C" fn video_sample_callback_retain(userdata: *mut c_void) {
     if userdata.is_null() {
         return;
     }
-    // SAFETY: `userdata` is the `Box<VideoCallbackState>` cast to `*mut c_void`
-    // in `set_sample_buffer_handler`, kept alive by the Swift callback box.
-    unsafe { VideoCallbackState::retain(userdata.cast::<VideoCallbackState>()) };
+    ArcContext::<VideoSampleCallbackState>::retain(userdata);
 }
 
-unsafe extern "C" fn video_callback_release(userdata: *mut c_void) {
+unsafe extern "C" fn video_sample_callback_release(userdata: *mut c_void) {
     if userdata.is_null() {
         return;
     }
-    // SAFETY: `userdata` was created by `Box::into_raw(Box::new(VideoCallbackState { .. }))`
-    // in `set_sample_buffer_handler`. `release` frees the box once the last
-    // reference (Rust creation ref + Swift callback box) is dropped.
-    unsafe { VideoCallbackState::release(userdata.cast::<VideoCallbackState>()) };
+    ArcContext::<VideoSampleCallbackState>::release(userdata);
+}
+
+unsafe extern "C" fn video_event_callback_retain(userdata: *mut c_void) {
+    if userdata.is_null() {
+        return;
+    }
+    ArcContext::<VideoEventCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn video_event_callback_release(userdata: *mut c_void) {
+    if userdata.is_null() {
+        return;
+    }
+    ArcContext::<VideoEventCallbackState>::release(userdata);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AVCaptureOutputDataDroppedReason, VideoDataOutput};
+    use crate::ffi;
+    use std::ffi::CString;
+
+    #[test]
+    fn synthetic_native_drops_increment_count_with_optional_reason() {
+        let output = VideoDataOutput::new().expect("video output should be constructible");
+        let first = unsafe {
+            ffi::video_data_output::av_capture_video_output_record_drop_for_testing(
+                output.ptr,
+                core::ptr::null(),
+            )
+        };
+        assert_eq!(first, 1);
+
+        let reason = CString::new("lateData").expect("drop reason CString");
+        let second = unsafe {
+            ffi::video_data_output::av_capture_video_output_record_drop_for_testing(
+                output.ptr,
+                reason.as_ptr(),
+            )
+        };
+        assert_eq!(second, 2);
+
+        let info = output.info().expect("video output info should decode");
+        assert_eq!(info.dropped_sample_count, 2);
+        assert_eq!(
+            info.last_dropped_sample_reason,
+            Some(AVCaptureOutputDataDroppedReason::LateData)
+        );
+    }
 }

@@ -7,6 +7,10 @@ fn main() -> support::ExampleResult {
     println!("photo output generic info: {:?}", output.output_info()?);
     println!("photo output specific info: {:?}", output.info()?);
     println!(
+        "raw photo formats on this platform: {:?}",
+        output.available_raw_photo_pixel_format_types()?
+    );
+    println!(
         "photo output capture readiness: {:?}",
         output.capture_readiness()?
     );
@@ -54,14 +58,25 @@ fn main() -> support::ExampleResult {
 
     if let Err(err) = output.capture_photo_with_settings(&settings, |event| {
         let photo_info = event.photo.as_ref().and_then(|photo| photo.info().ok());
+        let pixel_buffer = event
+            .photo
+            .as_ref()
+            .and_then(|photo| photo.pixel_buffer().ok().flatten());
+        let encoded_len = event
+            .photo
+            .as_ref()
+            .and_then(|photo| photo.file_data_representation().ok().flatten())
+            .map(|data| data.len());
         let resolved_settings = event
             .photo
             .as_ref()
             .and_then(|photo| photo.resolved_settings_info().ok())
             .unwrap_or(event.resolved_settings);
         println!(
-            "photo capture event: unique_id={}, error={:?}, resolved_settings={resolved_settings:?}, photo_info={photo_info:?}",
-            event.unique_id, event.error,
+            "photo capture event: unique_id={}, error={:?}, resolved_settings={resolved_settings:?}, photo_info={photo_info:?}, pixel_buffer={}, encoded_len={encoded_len:?}",
+            event.unique_id,
+            event.error,
+            pixel_buffer.is_some(),
         );
     }) {
         support::print_skip(

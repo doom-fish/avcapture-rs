@@ -23,12 +23,16 @@ fn main() -> support::ExampleResult {
     let recording_path = std::env::current_dir()?
         .join("target")
         .join("example-movie-file-output.mov");
-    match output.start_recording_with_handler(&recording_path, |event| {
-        println!("movie recording callback: {event:?}");
-    }) {
+    match output.start_recording_with_handler_and_options(
+        &recording_path,
+        RecordingOptions::default(),
+        |event| {
+            println!("movie recording callback: {event:?}");
+        },
+    ) {
         Ok(()) => {
             println!("movie recording unexpectedly started; stopping immediately");
-            output.stop_recording();
+            let _ = output.stop_recording();
         }
         Err(err) => {
             support::print_skip(

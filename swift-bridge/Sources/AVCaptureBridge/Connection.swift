@@ -179,6 +179,12 @@ public func av_capture_connection_set_video_mirrored(
         outErrorMessage?.pointee = ffiString("connection does not support video mirroring")
         return AVC_OPERATION_FAILED
     }
+    guard !connection.automaticallyAdjustsVideoMirroring else {
+        outErrorMessage?.pointee = ffiString(
+            "disable automatic video mirroring before setting isVideoMirrored"
+        )
+        return AVC_INVALID_ARGUMENT
+    }
     connection.isVideoMirrored = mirrored
     return AVC_OK
 }

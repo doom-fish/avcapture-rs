@@ -5,8 +5,9 @@ use core::ptr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::callback::{ArcContext, SerializedCallback};
 use crate::device::CaptureFlashMode;
-use crate::error::{from_swift, AVCaptureError};
+use crate::error::{from_swift, report_callback_error, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{parse_json_and_free, VideoDimensions};
 use crate::output::CaptureOutputRef;
@@ -33,7 +34,7 @@ pub enum PhotoOutputCaptureReadiness {
 
 impl PhotoOutputCaptureReadiness {
     #[must_use]
-    /// Wraps an existing `AVCapturePhotoOutput` pointer.
+    /// Decodes an `AVCapturePhotoOutput.CaptureReadiness` raw value.
     pub const fn from_raw(raw: i32) -> Self {
         match raw {
             0 => Self::SessionNotRunning,
@@ -84,7 +85,7 @@ pub struct PhotoOutputInfo {
     /// The available photo pixel format types reported by `AVCapturePhotoOutput`.
     pub available_photo_pixel_format_types: Vec<u32>,
     /// The available raw photo pixel format types reported by `AVCapturePhotoOutput`.
-    pub available_raw_photo_pixel_format_types: Vec<u32>,
+    pub available_raw_photo_pixel_format_types: Option<Vec<u32>>,
     /// The supported flash modes reported by `AVCapturePhotoOutput`.
     pub supported_flash_modes: Vec<CaptureFlashMode>,
     /// The max photo dimensions reported by `AVCapturePhotoOutput`.
@@ -105,6 +106,7 @@ pub struct PhotoOutputInfo {
 #[serde(rename_all = "camelCase")]
 /// Result payload produced by `AVCapturePhotoOutput` capture callbacks.
 pub struct PhotoCaptureResult {
+    #[serde(rename = "uniqueID", alias = "uniqueId")]
     /// The unique id reported by `AVCapturePhotoOutput`.
     pub unique_id: i64,
     /// The error message, if any.
@@ -127,6 +129,7 @@ pub struct PhotoCaptureEvent {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PhotoCaptureEventPayload {
+    #[serde(rename = "uniqueID", alias = "uniqueId")]
     unique_id: i64,
     error: Option<String>,
     resolved_settings: ResolvedPhotoSettingsInfo,
@@ -138,19 +141,22 @@ struct PhotoOutputReadinessPayload {
     capture_readiness: PhotoOutputCaptureReadiness,
 }
 
-struct PhotoCaptureEventCallbackState {
-    callback: Box<dyn FnMut(PhotoCaptureEvent) + Send + 'static>,
-}
-
-struct PhotoOutputReadinessCallbackState {
-    callback: Box<dyn FnMut(PhotoOutputCaptureReadiness) + Send + 'static>,
-}
+type PhotoCaptureEventCallbackState = SerializedCallback<Result<PhotoCaptureEvent, AVCaptureError>>;
+type PhotoOutputReadinessCallbackState = SerializedCallback<PhotoOutputCaptureReadiness>;
 
 /// Safe wrapper around `AVCapturePhotoOutput`.
 #[derive(Debug)]
 /// Wraps `AVCapturePhotoOutput`.
 pub struct PhotoOutput {
     pub(crate) ptr: *mut c_void,
+}
+
+impl Clone for PhotoOutput {
+    fn clone(&self) -> Self {
+        Self {
+            ptr: unsafe { ffi::photo_output::av_capture_photo_output_retain(self.ptr) },
+        }
+    }
 }
 
 impl Drop for PhotoOutput {
@@ -167,6 +173,8 @@ impl CaptureOutputRef for PhotoOutput {
         self.ptr
     }
 }
+
+impl crate::output::sealed::Sealed for PhotoOutput {}
 
 impl PhotoOutput {
     /// Creates a new `AVCapturePhotoOutput` wrapper.
@@ -211,7 +219,9 @@ impl PhotoOutput {
     }
 
     /// Returns the available raw photo pixel format types reported by `AVCapturePhotoOutput`.
-    pub fn available_raw_photo_pixel_format_types(&self) -> Result<Vec<u32>, AVCaptureError> {
+    pub fn available_raw_photo_pixel_format_types(
+        &self,
+    ) -> Result<Option<Vec<u32>>, AVCaptureError> {
         Ok(self.info()?.available_raw_photo_pixel_format_types)
     }
 
@@ -317,15 +327,27 @@ impl PhotoOutput {
     pub fn capture_photo_with_settings<F>(
         &self,
         settings: &PhotoSettings,
-        callback: F,
+        mut callback: F,
     ) -> Result<(), AVCaptureError>
     where
         F: FnMut(PhotoCaptureEvent) + Send + 'static,
     {
-        let state = Box::new(PhotoCaptureEventCallbackState {
-            callback: Box::new(callback),
-        });
-        let userdata = Box::into_raw(state).cast::<c_void>();
+        self.capture_photo_with_settings_result(settings, move |result| match result {
+            Ok(event) => callback(event),
+            Err(error) => report_callback_error("photo capture callback", error),
+        })
+    }
+
+    pub(crate) fn capture_photo_with_settings_result<F>(
+        &self,
+        settings: &PhotoSettings,
+        callback: F,
+    ) -> Result<(), AVCaptureError>
+    where
+        F: FnMut(Result<PhotoCaptureEvent, AVCaptureError>) + Send + 'static,
+    {
+        let state = ArcContext::new(PhotoCaptureEventCallbackState::new(callback));
+        let userdata = state.as_ptr();
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::photo_output::av_capture_photo_output_capture_photo(
@@ -333,12 +355,12 @@ impl PhotoOutput {
                 settings.ptr,
                 Some(photo_capture_event_trampoline),
                 userdata,
-                Some(photo_capture_event_callback_drop),
+                Some(photo_capture_event_callback_retain),
+                Some(photo_capture_event_callback_release),
                 &mut err,
             )
         };
         if status != ffi::status::OK {
-            unsafe { photo_capture_event_callback_drop(userdata) };
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
@@ -398,22 +420,20 @@ impl PhotoOutputReadinessCoordinator {
     where
         F: FnMut(PhotoOutputCaptureReadiness) + Send + 'static,
     {
-        let state = Box::new(PhotoOutputReadinessCallbackState {
-            callback: Box::new(callback),
-        });
-        let userdata = Box::into_raw(state).cast::<c_void>();
+        let state = ArcContext::new(PhotoOutputReadinessCallbackState::new(callback));
+        let userdata = state.as_ptr();
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::photo_output::av_capture_photo_output_readiness_coordinator_set_callback(
                 self.ptr,
                 Some(photo_output_readiness_trampoline),
                 userdata,
-                Some(photo_output_readiness_callback_drop),
+                Some(photo_output_readiness_callback_retain),
+                Some(photo_output_readiness_callback_release),
                 &mut err,
             )
         };
         if status != ffi::status::OK {
-            unsafe { photo_output_readiness_callback_drop(userdata) };
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
@@ -484,13 +504,26 @@ unsafe extern "C" fn photo_capture_event_trampoline(
     photo_ptr: *mut c_void,
     payload: *mut c_char,
 ) {
-    let Ok(result) = parse_json_and_free::<PhotoCaptureEventPayload>(payload) else {
-        if !photo_ptr.is_null() {
-            ffi::photo::av_capture_photo_release(photo_ptr);
+    let result = match parse_json_and_free::<PhotoCaptureEventPayload>(payload) {
+        Ok(result) => result,
+        Err(error) => {
+            if !photo_ptr.is_null() {
+                ffi::photo::av_capture_photo_release(photo_ptr);
+            }
+            if let Some(state) = ArcContext::<PhotoCaptureEventCallbackState>::get(userdata) {
+                state.dispatch("photo_capture_event_trampoline", Err(error));
+            } else {
+                report_callback_error(
+                    "photo_capture_event_trampoline",
+                    AVCaptureError::BridgeProtocol(
+                        "photo callback context was null during decode failure".to_owned(),
+                    ),
+                );
+            }
+            return;
         }
-        return;
     };
-    let Some(state) = userdata.cast::<PhotoCaptureEventCallbackState>().as_mut() else {
+    let Some(state) = ArcContext::<PhotoCaptureEventCallbackState>::get(userdata) else {
         if !photo_ptr.is_null() {
             ffi::photo::av_capture_photo_release(photo_ptr);
         }
@@ -499,54 +532,53 @@ unsafe extern "C" fn photo_capture_event_trampoline(
     let photo = if photo_ptr.is_null() {
         None
     } else {
-        Some(Photo::from_raw(photo_ptr))
+        Some(unsafe { Photo::from_retained_bridge_box(photo_ptr) })
     };
     // User closures can panic; catch them here so the panic doesn't unwind
     // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("photo_capture_event_trampoline", || {
-        (state.callback)(PhotoCaptureEvent {
+    state.dispatch(
+        "photo_capture_event_trampoline",
+        Ok(PhotoCaptureEvent {
             unique_id: result.unique_id,
             error: result.error,
             resolved_settings: result.resolved_settings,
             photo,
-        });
-    });
+        }),
+    );
 }
 
-unsafe extern "C" fn photo_capture_event_callback_drop(userdata: *mut c_void) {
-    if userdata.is_null() {
-        return;
-    }
-    drop(Box::from_raw(
-        userdata.cast::<PhotoCaptureEventCallbackState>(),
-    ));
+unsafe extern "C" fn photo_capture_event_callback_retain(userdata: *mut c_void) {
+    ArcContext::<PhotoCaptureEventCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn photo_capture_event_callback_release(userdata: *mut c_void) {
+    ArcContext::<PhotoCaptureEventCallbackState>::release(userdata);
+}
+
+unsafe extern "C" fn photo_output_readiness_callback_retain(userdata: *mut c_void) {
+    ArcContext::<PhotoOutputReadinessCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn photo_output_readiness_callback_release(userdata: *mut c_void) {
+    ArcContext::<PhotoOutputReadinessCallbackState>::release(userdata);
 }
 
 unsafe extern "C" fn photo_output_readiness_trampoline(
     userdata: *mut c_void,
     payload: *mut c_char,
 ) {
-    let Some(state) = userdata
-        .cast::<PhotoOutputReadinessCallbackState>()
-        .as_mut()
-    else {
+    let payload = match parse_json_and_free::<PhotoOutputReadinessPayload>(payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            report_callback_error("photo_output_readiness_trampoline", error);
+            return;
+        }
+    };
+    let Some(state) = ArcContext::<PhotoOutputReadinessCallbackState>::get(userdata) else {
         return;
     };
-    let Ok(payload) = parse_json_and_free::<PhotoOutputReadinessPayload>(payload) else {
-        return;
-    };
-    // User closures can panic; catch them here so the panic doesn't unwind
-    // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("photo_output_readiness_trampoline", || {
-        (state.callback)(payload.capture_readiness);
-    });
-}
-
-unsafe extern "C" fn photo_output_readiness_callback_drop(userdata: *mut c_void) {
-    if userdata.is_null() {
-        return;
-    }
-    drop(Box::from_raw(
-        userdata.cast::<PhotoOutputReadinessCallbackState>(),
-    ));
+    state.dispatch(
+        "photo_output_readiness_trampoline",
+        payload.capture_readiness,
+    );
 }

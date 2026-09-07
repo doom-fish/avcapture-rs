@@ -8,7 +8,7 @@ use apple_cf::cm::CMTime;
 use serde::{Deserialize, Serialize};
 
 use super::VideoDataOutput;
-use crate::error::{from_swift, AVCaptureError};
+use crate::error::{from_swift, report_callback_error, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{cm_time_serde, json_cstring, parse_json_and_free};
 
@@ -39,7 +39,7 @@ impl CaptureTimecodeSourceType {
     }
 
     #[must_use]
-    /// Wraps an existing `AVCaptureTimecodeSource` pointer.
+    /// Decodes an `AVCaptureTimecodeSource` raw value.
     pub fn from_raw(raw: &str) -> Self {
         match raw {
             "frameCount" => Self::FrameCount,
@@ -104,7 +104,7 @@ impl CaptureTimecodeGeneratorSynchronizationStatus {
     }
 
     #[must_use]
-    /// Wraps an existing `AVCaptureTimecodeGenerator` pointer.
+    /// Decodes an `AVCaptureTimecodeGeneratorSynchronizationStatus` raw value.
     pub fn from_raw(raw: &str) -> Self {
         match raw {
             "unknown" => Self::Unknown,
@@ -361,7 +361,12 @@ impl Drop for CaptureTimecodeSource {
 }
 
 impl CaptureTimecodeSource {
-    const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `TimecodeSourceBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `TimecodeSourceBox` returned at +1 by this crate's Swift bridge.
+    const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 
@@ -449,7 +454,7 @@ impl CaptureTimecodeGenerator {
             if ptr.is_null() {
                 return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
             }
-            sources.push(CaptureTimecodeSource::from_raw(ptr));
+            sources.push(unsafe { CaptureTimecodeSource::from_retained_bridge_box(ptr) });
         }
         Ok(sources)
     }
@@ -466,7 +471,9 @@ impl CaptureTimecodeGenerator {
             }
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
-        Ok(Some(CaptureTimecodeSource::from_raw(ptr)))
+        Ok(Some(unsafe {
+            CaptureTimecodeSource::from_retained_bridge_box(ptr)
+        }))
     }
 
     /// Corresponds to `AVCaptureTimecodeGenerator.synchronization_timeout`.
@@ -642,7 +649,7 @@ impl VideoDataOutput {
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
-        Ok(CaptureTimecodeSource::from_raw(ptr))
+        Ok(unsafe { CaptureTimecodeSource::from_retained_bridge_box(ptr) })
     }
 
     /// Returns the real-time-clock `AVCaptureTimecodeSource`.
@@ -652,7 +659,7 @@ impl VideoDataOutput {
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
-        Ok(CaptureTimecodeSource::from_raw(ptr))
+        Ok(unsafe { CaptureTimecodeSource::from_retained_bridge_box(ptr) })
     }
 
     /// Creates an `AVCaptureTimecode` value.
@@ -704,8 +711,12 @@ unsafe extern "C" fn timecode_delegate_trampoline(userdata: *mut c_void, payload
     let Some(state) = userdata.cast::<TimecodeDelegateCallbackState>().as_mut() else {
         return;
     };
-    let Ok(event) = parse_json_and_free::<CaptureTimecodeGeneratorEvent>(payload) else {
-        return;
+    let event = match parse_json_and_free::<CaptureTimecodeGeneratorEvent>(payload) {
+        Ok(event) => event,
+        Err(error) => {
+            report_callback_error("timecode_delegate_trampoline", error);
+            return;
+        }
     };
     // User closures can panic; catch them here so the panic doesn't unwind
     // across the `extern "C"` boundary (which is UB).

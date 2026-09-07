@@ -4,6 +4,7 @@ use core::ffi::{c_char, c_void};
 use core::ptr;
 
 use apple_cf::cm::CMTime;
+use apple_cf::cv::CVPixelBuffer;
 use serde::{Deserialize, Serialize};
 
 use crate::device::CaptureFlashMode;
@@ -28,7 +29,7 @@ pub enum PhotoQualityPrioritization {
 
 impl PhotoQualityPrioritization {
     #[must_use]
-    /// Wraps an existing `AVCapturePhotoOutputQualityPrioritization` pointer.
+    /// Decodes an `AVCapturePhotoOutputQualityPrioritization` raw value.
     pub const fn from_raw(raw: i32) -> Self {
         match raw {
             1 => Self::Speed,
@@ -66,6 +67,7 @@ impl From<PhotoQualityPrioritization> for i32 {
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCapturePhotoSettings` state.
 pub struct PhotoSettingsInfo {
+    #[serde(rename = "uniqueID", alias = "uniqueId")]
     /// The unique id reported by `AVCapturePhotoSettings`.
     pub unique_id: i64,
     /// The processed file type reported by `AVCapturePhotoSettings`.
@@ -74,12 +76,15 @@ pub struct PhotoSettingsInfo {
     pub flash_mode: Option<CaptureFlashMode>,
     /// The photo quality prioritization reported by `AVCapturePhotoSettings`.
     pub photo_quality_prioritization: Option<PhotoQualityPrioritization>,
+    /// Whether these settings have already been consumed by a capture request.
+    pub used_for_capture: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCaptureResolvedPhotoSettings` state.
 pub struct ResolvedPhotoSettingsInfo {
+    #[serde(rename = "uniqueID", alias = "uniqueId")]
     /// The unique id reported by `AVCaptureResolvedPhotoSettings`.
     pub unique_id: i64,
     /// The photo dimensions reported by `AVCaptureResolvedPhotoSettings`.
@@ -94,6 +99,7 @@ pub struct ResolvedPhotoSettingsInfo {
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCapturePhoto` state.
 pub struct PhotoInfo {
+    #[serde(rename = "uniqueID", alias = "uniqueId")]
     /// The unique id reported by `AVCapturePhoto`.
     pub unique_id: i64,
     #[serde(with = "cm_time_serde")]
@@ -103,6 +109,10 @@ pub struct PhotoInfo {
     pub photo_count: usize,
     /// The pixel buffer available reported by `AVCapturePhoto`.
     pub pixel_buffer_available: bool,
+    /// The pixel format of the captured pixel buffer, if one is available.
+    pub pixel_buffer_pixel_format: Option<u32>,
+    /// The dimensions of the captured pixel buffer, if one is available.
+    pub pixel_buffer_dimensions: Option<VideoDimensions>,
     /// The constant color confidence map available reported by `AVCapturePhoto`.
     pub constant_color_confidence_map_available: Option<bool>,
     /// The constant color center weighted mean confidence level reported by `AVCapturePhoto`.
@@ -234,7 +244,12 @@ impl Drop for ResolvedPhotoSettings {
 }
 
 impl ResolvedPhotoSettings {
-    pub(crate) const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `ResolvedPhotoSettingsBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `ResolvedPhotoSettingsBox` returned at +1 by this crate's Swift bridge.
+    pub(crate) const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 
@@ -287,7 +302,12 @@ impl Drop for Photo {
 }
 
 impl Photo {
-    pub(crate) const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `PhotoBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `PhotoBox` returned at +1 by this crate's Swift bridge.
+    pub(crate) const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 
@@ -321,6 +341,38 @@ impl Photo {
         Ok(self.info()?.pixel_buffer_available)
     }
 
+    /// Returns a +1 retained captured pixel buffer, when the native photo provides one.
+    #[allow(unused_unsafe)]
+    pub fn pixel_buffer(&self) -> Result<Option<CVPixelBuffer>, AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let pixel_buffer = unsafe { ffi::photo::av_capture_photo_pixel_buffer(self.ptr, &mut err) };
+        if pixel_buffer.is_null() {
+            if err.is_null() {
+                return Ok(None);
+            }
+            return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
+        }
+        Ok(unsafe { CVPixelBuffer::from_raw(pixel_buffer) })
+    }
+
+    /// Returns the platform-supported encoded file representation of this photo.
+    pub fn file_data_representation(&self) -> Result<Option<Vec<u8>>, AVCaptureError> {
+        let mut length = 0_usize;
+        let mut err: *mut c_char = ptr::null_mut();
+        let bytes = unsafe {
+            ffi::photo::av_capture_photo_file_data_representation(self.ptr, &mut length, &mut err)
+        };
+        if bytes.is_null() {
+            if err.is_null() {
+                return Ok(None);
+            }
+            return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
+        }
+        let data = unsafe { core::slice::from_raw_parts(bytes, length) }.to_vec();
+        unsafe { ffi::photo::av_capture_photo_file_data_free(bytes) };
+        Ok(Some(data))
+    }
+
     /// Corresponds to `AVCapturePhoto.resolved_settings_info`.
     pub fn resolved_settings_info(&self) -> Result<ResolvedPhotoSettingsInfo, AVCaptureError> {
         Ok(self.info()?.resolved_settings)
@@ -333,7 +385,7 @@ impl Photo {
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
-        Ok(ResolvedPhotoSettings::from_raw(ptr))
+        Ok(unsafe { ResolvedPhotoSettings::from_retained_bridge_box(ptr) })
     }
 }
 
@@ -341,3 +393,50 @@ impl Photo {
 // moved across thread boundaries for async capture delivery.
 unsafe impl Send for ResolvedPhotoSettings {}
 unsafe impl Send for Photo {}
+
+#[cfg(test)]
+mod tests {
+    use super::{PhotoInfo, PhotoSettingsInfo};
+
+    #[test]
+    fn swift_photo_payload_fixtures_use_id_acronyms_and_pixel_metadata() {
+        let settings: PhotoSettingsInfo = serde_json::from_str(
+            r#"{
+                "uniqueID": 41,
+                "processedFileType": null,
+                "flashMode": null,
+                "photoQualityPrioritization": null,
+                "usedForCapture": false
+            }"#,
+        )
+        .expect("photo settings fixture should decode");
+        assert_eq!(settings.unique_id, 41);
+        assert!(!settings.used_for_capture);
+
+        let photo: PhotoInfo = serde_json::from_str(
+            r#"{
+                "uniqueID": 42,
+                "timestamp": {"value": 3, "timescale": 30, "flags": 1, "epoch": 0},
+                "photoCount": 1,
+                "pixelBufferAvailable": true,
+                "pixelBufferPixelFormat": 1111970369,
+                "pixelBufferDimensions": {"width": 640, "height": 480},
+                "constantColorConfidenceMapAvailable": null,
+                "constantColorCenterWeightedMeanConfidenceLevel": null,
+                "constantColorFallbackPhoto": null,
+                "resolvedSettings": {
+                    "uniqueID": 42,
+                    "photoDimensions": {"width": 640, "height": 480},
+                    "expectedPhotoCount": 1,
+                    "fastCapturePrioritizationEnabled": null
+                }
+            }"#,
+        )
+        .expect("photo fixture should decode");
+        assert_eq!(photo.unique_id, 42);
+        assert_eq!(
+            photo.pixel_buffer_dimensions.expect("dimensions").width,
+            640
+        );
+    }
+}

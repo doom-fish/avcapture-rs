@@ -1,9 +1,9 @@
 # avcapture-rs coverage audit v2 (vs MacOSX26.2.sdk)
 
 SDK_PUBLIC_SYMBOLS: 73
-VERIFIED: 54
+VERIFIED: 53
 GAPS: 0
-EXEMPT: 19
+EXEMPT: 20
 COVERAGE_PCT: 100.0%
 
 Audit scope: macOS AVCapture framework subset (AVCaptureSession, AVCaptureDevice, AVCapturePhotoOutput, AVCaptureVideoDataOutput, AVCaptureAudioDataOutput, AVCaptureFileOutput, AVCaptureMetadataOutput, and related classes/protocols). All macOS-available SDK symbols are wrapped via Rust safe APIs in swift-bridge or crate src. The EXEMPT symbols are iOS-only and explicitly unavailable on macOS per their SDK API_UNAVAILABLE(macos) attributes—re-verified against actual headers in MacOSX26.2.sdk.
@@ -31,8 +31,8 @@ Audit scope: macOS AVCapture framework subset (AVCaptureSession, AVCaptureDevice
 | AVCaptureExternalDisplayConfiguration | interface | AVCaptureExternalDisplayConfigurator.h | ExternalDisplayConfiguration |
 | AVCaptureExternalDisplayConfigurator | interface | AVCaptureExternalDisplayConfigurator.h | ExternalDisplayConfigurator |
 | AVCaptureFileOutput | interface | AVCaptureFileOutput.h | MovieFileOutput |
-| AVCaptureFileOutputDelegate | protocol | AVCaptureFileOutput.h | MovieFileOutput::set_recording_delegate |
-| AVCaptureFileOutputRecordingDelegate | protocol | AVCaptureFileOutput.h | MovieFileOutput::set_recording_delegate |
+| AVCaptureFileOutputDelegate | protocol | AVCaptureFileOutput.h | MovieFileOutput / AudioFileOutput identity-checked boundary handlers and streams |
+| AVCaptureFileOutputRecordingDelegate | protocol | AVCaptureFileOutput.h | Staged recording operations with callback-safe native finalization |
 | AVCaptureIndexPicker | interface | AVCaptureIndexPicker.h | CaptureIndexPicker |
 | AVCaptureInput | interface | AVCaptureInput.h | CaptureInputInfo / DeviceInput |
 | AVCaptureInputPort | interface | AVCaptureInput.h | CaptureInputPortInfo |
@@ -40,9 +40,8 @@ Audit scope: macOS AVCapture framework subset (AVCaptureSession, AVCaptureDevice
 | AVCaptureMetadataOutputObjectsDelegate | protocol | AVCaptureMetadataOutput.h | MetadataOutput::set_metadata_objects_handler |
 | AVCaptureMovieFileOutput | interface | AVCaptureFileOutput.h | MovieFileOutput |
 | AVCaptureOutput | interface | AVCaptureOutputBase.h | CaptureOutputInfo |
-| AVCapturePhoto | interface | AVCapturePhotoOutput.h | Photo |
+| AVCapturePhoto | interface | AVCapturePhotoOutput.h | Photo with retained pixel-buffer and owned file-data access |
 | AVCapturePhotoCaptureDelegate | protocol | AVCapturePhotoOutput.h | PhotoOutput callbacks |
-| AVCapturePhotoFileDataRepresentationCustomizer | protocol | AVCapturePhotoOutput.h | PhotoOutput callbacks |
 | AVCapturePhotoOutput | interface | AVCapturePhotoOutput.h | PhotoOutput |
 | AVCapturePhotoOutputReadinessCoordinator | interface | AVCapturePhotoOutput.h | PhotoOutputReadinessCoordinator |
 | AVCapturePhotoSettings | interface | AVCapturePhotoOutput.h | PhotoSettings |
@@ -60,8 +59,8 @@ Audit scope: macOS AVCapture framework subset (AVCaptureSession, AVCaptureDevice
 | AVCaptureTimecodeGeneratorDelegate | protocol | AVCaptureTimecodeGenerator.h | CaptureTimecodeGenerator callbacks |
 | AVCaptureTimecodeSource | interface | AVCaptureTimecodeGenerator.h | CaptureTimecodeSource |
 | AVCaptureVideoDataOutput | interface | AVCaptureVideoDataOutput.h | VideoDataOutput |
-| AVCaptureVideoDataOutputSampleBufferDelegate | protocol | AVCaptureVideoDataOutput.h | VideoDataOutput::set_sample_buffer_handler |
-| AVCaptureVideoPreviewLayer | interface | AVCaptureVideoPreviewLayer.h | VideoPreviewLayer (CALayer-based) |
+| AVCaptureVideoDataOutputSampleBufferDelegate | protocol | AVCaptureVideoDataOutput.h | VideoDataOutput sample + didDrop event handlers and streams |
+| AVCaptureVideoPreviewLayer | interface | AVCaptureVideoPreviewLayer.h | VideoPreviewLayer with native CALayer interop and caller-owned hosting |
 | AVExposureBiasRange | interface | AVCaptureDevice.h | Covered by info/callback methods |
 | AVFrameRateRange | interface | AVCaptureDevice.h | Covered by info/callback methods |
 | AVZoomRange | interface | AVCaptureDevice.h | Covered by info/callback methods |
@@ -82,6 +81,7 @@ _None. All macOS-available public AVCapture symbols are wrapped by avcapture-rs.
 | AVCaptureMetadataInput | interface | AVCaptureInput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(9.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureMultiCamSession | interface | AVCaptureSession.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(13.0), macCatalyst(14.0), tvos(17.0), visionos(2.1)) API_UNAVAILABLE(macos) API_UNAVAILABLE(watchos) |
 | AVCapturePhotoBracketSettings | interface | AVCapturePhotoOutput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(10.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
+| AVCapturePhotoFileDataRepresentationCustomizer | protocol | AVCapturePhotoOutput.h | Unavailable on macOS; the crate exposes the supported no-customizer file representation | API_AVAILABLE(ios(12.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCapturePhotoOutputReadinessCoordinatorDelegate | protocol | AVCapturePhotoOutput.h | iOS-only (unavailable on macOS) | @property(nonatomic, getter=isCameraSensorOrientationCompensationEnabled) BOOL cameraSensorOrientationCompensationEnabled API_AVAILABLE(ios(26.0)) API_UNAVAILABLE(macos, macCatalyst, tvos, visionos) API_UNAVAILABLE(watchos); |
 | AVCaptureSmartFramingMonitor | interface | AVCaptureDevice.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(26.0)) API_UNAVAILABLE(macos, macCatalyst, tvos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureSpatialAudioMetadataSampleGenerator | interface | AVCaptureSpatialAudioMetadataSampleGenerator.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(26.0)) API_UNAVAILABLE(macos, macCatalyst, tvos, visionos) API_UNAVAILABLE(watchos) |

@@ -20,7 +20,7 @@ pub enum CaptureDevicePosition {
 
 impl CaptureDevicePosition {
     #[must_use]
-    /// Wraps an existing `AVCaptureDevicePosition` pointer.
+    /// Decodes an `AVCaptureDevicePosition` raw value.
     pub const fn from_raw(raw: i32) -> Self {
         match raw {
             0 => Self::Unspecified,

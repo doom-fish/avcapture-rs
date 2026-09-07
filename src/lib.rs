@@ -6,6 +6,7 @@
 /// Async future/stream adapters for `AVCapture*` completion handlers, notifications, and delegate callbacks.
 pub mod async_api;
 mod audio_data_output;
+mod callback;
 mod camera_calibration_data;
 mod connection;
 mod device;
@@ -57,7 +58,7 @@ pub use device_format::{
 };
 pub use device_input::{CaptureMultichannelAudioMode, DeviceInput, DeviceInputInfo};
 pub use device_position::CaptureDevicePosition;
-pub use error::AVCaptureError;
+pub use error::{take_callback_diagnostics, AVCaptureError, CallbackDiagnostic};
 pub use helpers::{CapturePoint, CaptureRect, CaptureSize, VideoDimensions};
 pub use input::{CaptureInputInfo, CaptureInputPortInfo, CaptureInputRef};
 pub use metadata_output::{
@@ -66,6 +67,7 @@ pub use metadata_output::{
 pub use movie_file_output::{
     AudioFileOutput, AudioFileOutputInfo, AudioFileRecordingEvent, AudioFileRecordingEventKind,
     MovieFileOutput, MovieFileOutputInfo, MovieRecordingEvent, MovieRecordingEventKind,
+    RecordingOptions, RecordingOverwritePolicy,
 };
 pub use output::{
     AVCaptureOutputDataDroppedReason, CaptureOutputDataDroppedReason, CaptureOutputInfo,
@@ -90,13 +92,14 @@ pub use video_data_output::{
     CaptureTimecode, CaptureTimecodeGenerator, CaptureTimecodeGeneratorEvent,
     CaptureTimecodeGeneratorInfo, CaptureTimecodeGeneratorSynchronizationStatus,
     CaptureTimecodeSource, CaptureTimecodeSourceInfo, CaptureTimecodeSourceType,
-    TimecodeMetadataSampleBuffer, VideoDataOutput, VideoDataOutputInfo, VideoOutputSettings,
+    TimecodeMetadataSampleBuffer, VideoDataOutput, VideoDataOutputEvent, VideoDataOutputInfo,
+    VideoOutputSettings,
 };
 pub use video_preview_layer::{
     DeskViewApplication, DeskViewApplicationInfo, DeskViewApplicationLaunchConfiguration,
     DeskViewApplicationLaunchConfigurationInfo, ExternalDisplayConfiguration,
     ExternalDisplayConfigurationInfo, ExternalDisplayConfigurator, ExternalDisplayConfiguratorInfo,
-    ExternalDisplaySupportInfo, VideoPreviewLayer, VideoPreviewLayerInfo,
+    ExternalDisplaySupportInfo, RetainedNativeLayer, VideoPreviewLayer, VideoPreviewLayerInfo,
 };
 
 /// Common imports.
@@ -137,9 +140,10 @@ pub mod prelude {
         MetadataOutputInfo, MovieFileOutput, MovieFileOutputInfo, MovieRecordingEvent,
         MovieRecordingEventKind, Photo, PhotoCaptureEvent, PhotoCaptureResult, PhotoInfo,
         PhotoOutput, PhotoOutputCaptureReadiness, PhotoOutputInfo, PhotoOutputReadinessCoordinator,
-        PhotoQualityPrioritization, PhotoSettings, PhotoSettingsInfo, ResolvedPhotoSettings,
-        ResolvedPhotoSettingsInfo, ScreenInput, ScreenInputInfo, TimecodeMetadataSampleBuffer,
-        VideoDataOutput, VideoDataOutputInfo, VideoDimensions, VideoOutputSettings,
-        VideoPreviewLayer, VideoPreviewLayerInfo, ZoomRange,
+        PhotoQualityPrioritization, PhotoSettings, PhotoSettingsInfo, RecordingOptions,
+        RecordingOverwritePolicy, ResolvedPhotoSettings, ResolvedPhotoSettingsInfo,
+        RetainedNativeLayer, ScreenInput, ScreenInputInfo, TimecodeMetadataSampleBuffer,
+        VideoDataOutput, VideoDataOutputEvent, VideoDataOutputInfo, VideoDimensions,
+        VideoOutputSettings, VideoPreviewLayer, VideoPreviewLayerInfo, ZoomRange,
     };
 }

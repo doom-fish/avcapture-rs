@@ -112,8 +112,12 @@ pub struct CaptureDeviceFormat {
 }
 
 impl CaptureDeviceFormat {
-    /// Wraps an existing `AVCaptureDeviceFormat` pointer.
-    pub const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `DeviceFormatBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `DeviceFormatBox` returned at +1 by this crate's Swift bridge.
+    pub(crate) const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 

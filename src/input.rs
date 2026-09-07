@@ -9,6 +9,10 @@ use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
 use crate::helpers::parse_json_and_free;
 
+pub(crate) mod sealed {
+    pub trait Sealed {}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCaptureInputPort` state.
@@ -37,14 +41,16 @@ impl CaptureInputInfo {
     }
 }
 
-/// Shared helper methods for wrappers backed by `AVCaptureInput`.
-pub trait CaptureInputRef {
-    /// Returns the raw `AVCaptureInput` pointer.
+/// Shared helper methods for crate-owned wrappers backed by `AVCaptureInput`.
+pub trait CaptureInputRef: sealed::Sealed {
+    /// Returns a borrowed Swift `CaptureInputBoxBase` handle.
+    ///
+    /// The handle is valid only while `self` remains alive and does not transfer ownership.
     fn input_ptr(&self) -> *mut c_void;
 
     /// Returns a snapshot of `AVCaptureInput` state.
     fn input_info(&self) -> Result<CaptureInputInfo, AVCaptureError> {
-        input_info_from_ptr(self.input_ptr())
+        unsafe { input_info_from_ptr(self.input_ptr()) }
     }
 
     /// Returns the input ports reported by `AVCaptureInput`.
@@ -58,8 +64,12 @@ pub trait CaptureInputRef {
     }
 }
 
-/// Corresponds to `AVCapture.input_info_from_ptr`.
-pub fn input_info_from_ptr(ptr_value: *mut c_void) -> Result<CaptureInputInfo, AVCaptureError> {
+/// # Safety
+///
+/// `ptr_value` must be a live borrowed `CaptureInputBoxBase` handle produced by this bridge.
+pub(crate) unsafe fn input_info_from_ptr(
+    ptr_value: *mut c_void,
+) -> Result<CaptureInputInfo, AVCaptureError> {
     let mut err: *mut c_char = ptr::null_mut();
     let json_ptr = unsafe { ffi::input::av_capture_input_info_json(ptr_value, &mut err) };
     if json_ptr.is_null() {

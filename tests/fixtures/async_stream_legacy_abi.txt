@@ -1,0 +1,21 @@
+# symbol|rust parameters|rust return|Swift parameters|Swift return
+avcapture_session_running_subscribe|*mutc_void,Option<StreamEventCallback>,*mutc_void|*mutc_void|UnsafeMutableRawPointer,AVCStreamEventCallback?,UnsafeMutableRawPointer|UnsafeMutableRawPointer?
+avcapture_session_running_unsubscribe|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_session_error_subscribe|*mutc_void,Option<StreamEventCallback>,*mutc_void|*mutc_void|UnsafeMutableRawPointer,AVCStreamEventCallback?,UnsafeMutableRawPointer|UnsafeMutableRawPointer?
+avcapture_session_error_unsubscribe|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_session_interruption_subscribe|*mutc_void,Option<StreamEventCallback>,*mutc_void|*mutc_void|UnsafeMutableRawPointer,AVCStreamEventCallback?,UnsafeMutableRawPointer|UnsafeMutableRawPointer?
+avcapture_session_interruption_unsubscribe|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_video_sample_subscribe|*mutc_void,*constc_char,Option<VideoSampleCallback>,*mutc_void|*mutc_void|UnsafeMutableRawPointer,UnsafePointer<CChar>,AVCVideoSampleCallback?,UnsafeMutableRawPointer|UnsafeMutableRawPointer?
+avcapture_video_sample_unsubscribe|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_audio_sample_subscribe|*mutc_void,*constc_char,Option<AudioSampleCallback>,*mutc_void|*mutc_void|UnsafeMutableRawPointer,UnsafePointer<CChar>,AVCAudioSampleCallback?,UnsafeMutableRawPointer|UnsafeMutableRawPointer?
+avcapture_audio_sample_unsubscribe|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_file_recording_stream_start|*mutc_void,*constc_char,Option<StreamEventCallback>,*mutc_void,*mut*mutc_char|*mutc_void|UnsafeMutableRawPointer,UnsafePointer<CChar>,AVCStreamEventCallback?,UnsafeMutableRawPointer,UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?|UnsafeMutableRawPointer?
+avcapture_file_recording_stream_stop|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_audio_file_recording_stream_start|*mutc_void,*constc_char,*constc_char,Option<StreamEventCallback>,*mutc_void,*mut*mutc_char|*mutc_void|UnsafeMutableRawPointer,UnsafePointer<CChar>,UnsafePointer<CChar>,AVCStreamEventCallback?,UnsafeMutableRawPointer,UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?|UnsafeMutableRawPointer?
+avcapture_audio_file_recording_stream_stop|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_movie_file_boundary_subscribe|*mutc_void,Option<AudioSampleCallback>,*mutc_void|*mutc_void|UnsafeMutableRawPointer,AVCAudioSampleCallback?,UnsafeMutableRawPointer|UnsafeMutableRawPointer?
+avcapture_movie_file_boundary_unsubscribe|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_audio_file_boundary_subscribe|*mutc_void,Option<AudioSampleCallback>,*mutc_void|*mutc_void|UnsafeMutableRawPointer,AVCAudioSampleCallback?,UnsafeMutableRawPointer|UnsafeMutableRawPointer?
+avcapture_audio_file_boundary_unsubscribe|*mutc_void|()|UnsafeMutableRawPointer?|()
+avcapture_metadata_objects_subscribe|*mutc_void,*constc_char,Option<StreamEventCallback>,*mutc_void|*mutc_void|UnsafeMutableRawPointer,UnsafePointer<CChar>,AVCStreamEventCallback?,UnsafeMutableRawPointer|UnsafeMutableRawPointer?
+avcapture_metadata_objects_unsubscribe|*mutc_void|()|UnsafeMutableRawPointer?|()

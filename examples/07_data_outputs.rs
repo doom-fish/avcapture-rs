@@ -8,8 +8,14 @@ fn main() -> support::ExampleResult {
         &VideoOutputSettings::bgra().with_dimensions(1920, 1080),
     ))?;
     video_output.set_always_discards_late_video_frames(true);
-    video_output
-        .set_sample_buffer_handler(Some("avcapture-example-video"), |_sample, _pixel_buffer| {})?;
+    video_output.set_sample_buffer_event_handler(Some("avcapture-example-video"), |event| {
+        match event {
+            VideoDataOutputEvent::Sample { .. } => {}
+            VideoDataOutputEvent::Dropped { reason, total, .. } => {
+                println!("video frame dropped: total={total}, reason={reason:?}");
+            }
+        }
+    })?;
 
     let audio_output = AudioDataOutput::new()?;
     audio_output.set_audio_settings(Some(&AudioOutputSettings::pcm_i16(48_000.0, 2)))?;
@@ -52,7 +58,7 @@ fn main() -> support::ExampleResult {
             .map(AVCaptureOutputDataDroppedReason::as_raw)
     );
 
-    video_output.clear_sample_buffer_handler();
+    video_output.clear_sample_buffer_event_handler();
     audio_output.clear_sample_buffer_handler();
     Ok(())
 }

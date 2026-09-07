@@ -1,6 +1,6 @@
 [package]
 name = "avcapture"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/doom-fish/avcapture-rs"
@@ -32,8 +32,6 @@ include = [
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
-# `apple-cf` still pulls `doom-fish-utils` 0.2.x transitively; keep the direct
-# dependency on the current 0.3.x line until that upstream dependency converges.
 multiple-crate-versions = "allow"
 
 [lib]
@@ -45,10 +43,10 @@ default = []
 async = []
 
 [dependencies]
-apple-cf = { version = ">=0.4, <0.10", default-features = false, features = ["cv", "cm"] }
+apple-cf = { version = ">=0.10, <0.11", default-features = false, features = ["cv", "cm"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-doom-fish-utils = { path = "../doom-fish-utils", version = ">=0.1, <0.4" }
+doom-fish-utils = { path = "../doom-fish-utils", version = ">=0.4, <0.5" }
 
 [dev-dependencies]
 pollster = "0.3"

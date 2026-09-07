@@ -1,4 +1,5 @@
 import AVFoundation
+import Darwin
 import Foundation
 
 struct MovieFileOutputInfoPayload: Codable {
@@ -42,43 +43,27 @@ private struct FileRecordingEventPayload: Codable {
 }
 
 private final class FileOutputSampleBufferCallbackBox {
-    let callback: AVCAudioSampleCallback
-    let userData: UnsafeMutableRawPointer?
-    let dropUserData: AVCDropCallback?
-    private var disposed = false
+    private let callback: AVCAudioSampleCallback
+    private let contextOwner: AVCCallbackContextOwner
 
     init(
         callback: @escaping AVCAudioSampleCallback,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
         dropUserData: AVCDropCallback?
     ) {
         self.callback = callback
-        self.userData = userData
-        self.dropUserData = dropUserData
+        contextOwner = AVCCallbackContextOwner(
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: dropUserData
+        )
     }
 
     func emit(sampleBuffer: CMSampleBuffer) {
-        guard !disposed else { return }
+        let contextOwner = self.contextOwner
         let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
-        callback(userData, sampleOpaque)
-    }
-
-    func dispose() {
-        // Stop emitting; the context release is deferred to `deinit` so any
-        // in-flight boundary callback keeps the context alive until it returns.
-        disposed = true
-    }
-
-    deinit {
-        // Release the refcounted Rust callback context here rather than in
-        // `dispose()`. The boundary delegate closure holds a strong reference to
-        // this box for the duration of `emit`, so this `deinit` cannot run until
-        // an in-flight callback returns. Freeing in `dispose()` would let
-        // `clearSampleBufferBoundaryCallback` free the context while a callback
-        // already in flight still reads it (use-after-free).
-        if let userData, let dropUserData {
-            dropUserData(userData)
-        }
+        callback(contextOwner.userData, sampleOpaque)
     }
 }
 
@@ -102,16 +87,275 @@ private final class FileOutputBoundaryDelegate: NSObject, AVCaptureFileOutputDel
     }
 }
 
-private protocol FileRecordingEventOwner: AnyObject {
-    func emitEvent(kind: String, fileURL: URL, error: Error?)
-    func finishRecording()
+enum AVCRecordingOverwritePolicy: Int32 {
+    case failIfExists = 0
+    case overwriteRegularFile = 1
 }
 
-private final class FileRecordingDelegate<Owner: FileRecordingEventOwner>: NSObject, AVCaptureFileOutputRecordingDelegate {
-    private weak var owner: Owner?
+final class AVCPreparedRecordingDestination {
+    let requestedURL: URL
+    let stagingURL: URL
+    let overwritePolicy: AVCRecordingOverwritePolicy
 
-    init(owner: Owner) {
+    init(path: String, overwritePolicy: AVCRecordingOverwritePolicy) throws {
+        let requestedURL = URL(fileURLWithPath: path).standardizedFileURL
+        guard requestedURL.path.hasPrefix("/") else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "recording output path must be absolute"
+            )
+        }
+        let parentURL = requestedURL.deletingLastPathComponent()
+        guard let parentStatus = try Self.fileStatus(at: parentURL, followSymlinks: true),
+              (parentStatus.st_mode & S_IFMT) == S_IFDIR
+        else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "recording output parent directory does not exist or is not a directory"
+            )
+        }
+        if let destinationStatus = try Self.fileStatus(at: requestedURL) {
+            switch overwritePolicy {
+            case .failIfExists:
+                throw BridgeError.status(
+                    AVC_OUTPUT_FILE_EXISTS,
+                    requestedURL.path
+                )
+            case .overwriteRegularFile:
+                guard (destinationStatus.st_mode & S_IFMT) == S_IFREG else {
+                    throw BridgeError.status(
+                        AVC_INVALID_ARGUMENT,
+                        "explicit recording overwrite is limited to regular files"
+                    )
+                }
+            }
+        }
+
+        var stagingURL: URL
+        repeat {
+            let name = ".\(requestedURL.lastPathComponent).avcapture-\(UUID().uuidString).partial"
+            stagingURL = parentURL.appendingPathComponent(name, isDirectory: false)
+        } while try Self.fileStatus(at: stagingURL) != nil
+
+        self.requestedURL = requestedURL
+        self.stagingURL = stagingURL
+        self.overwritePolicy = overwritePolicy
+    }
+
+    func finalize(nativeError: Error?) -> Error? {
+        if let nativeError {
+            let successfullyFinished =
+                (nativeError as NSError)
+                .userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool
+            guard successfullyFinished == true else {
+                discardStagingFile()
+                return nativeError
+            }
+        }
+        do {
+            try moveStagingFileIntoPlace()
+            return nativeError
+        } catch let finalizationError {
+            discardStagingFile()
+            if let nativeError {
+                return BridgeError.message(
+                    "\(nativeError.localizedDescription); finalization failed: \(finalizationError.localizedDescription)"
+                )
+            }
+            return finalizationError
+        }
+    }
+
+    private func moveStagingFileIntoPlace() throws {
+        switch overwritePolicy {
+        case .failIfExists:
+            let result = stagingURL.withUnsafeFileSystemRepresentation { source in
+                requestedURL.withUnsafeFileSystemRepresentation { destination in
+                    renameatx_np(
+                        AT_FDCWD,
+                        source,
+                        AT_FDCWD,
+                        destination,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            guard result == 0 else {
+                if errno == EEXIST {
+                    throw BridgeError.status(AVC_OUTPUT_FILE_EXISTS, requestedURL.path)
+                }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        case .overwriteRegularFile:
+            if let destinationStatus = try Self.fileStatus(at: requestedURL),
+               (destinationStatus.st_mode & S_IFMT) != S_IFREG
+            {
+                throw BridgeError.status(
+                    AVC_INVALID_ARGUMENT,
+                    "recording destination stopped being a regular file before finalization"
+                )
+            }
+            let result = stagingURL.withUnsafeFileSystemRepresentation { source in
+                requestedURL.withUnsafeFileSystemRepresentation { destination in
+                    rename(source, destination)
+                }
+            }
+            guard result == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+    }
+
+    private func discardStagingFile() {
+        guard let status = try? Self.fileStatus(at: stagingURL),
+              (status.st_mode & S_IFMT) == S_IFREG
+        else {
+            return
+        }
+        _ = stagingURL.withUnsafeFileSystemRepresentation { unlink($0) }
+    }
+
+    private static func fileStatus(
+        at url: URL,
+        followSymlinks: Bool = false
+    ) throws -> stat? {
+        var fileInfo = stat()
+        let result = url.withUnsafeFileSystemRepresentation { path in
+            if followSymlinks {
+                return fstatat(AT_FDCWD, path, &fileInfo, 0)
+            }
+            return lstat(path, &fileInfo)
+        }
+        if result == 0 {
+            return fileInfo
+        }
+        if errno == ENOENT {
+            return nil
+        }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+}
+
+@_cdecl("av_capture_recording_destination_finalize_for_testing")
+public func av_capture_recording_destination_finalize_for_testing(
+    _ pathBytes: UnsafePointer<UInt8>,
+    _ pathLength: Int,
+    _ overwritePolicyRaw: Int32,
+    _ nativeErrorMode: Int32,
+    _ outHadError: UnsafeMutablePointer<Bool>,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    do {
+        guard let overwritePolicy = AVCRecordingOverwritePolicy(rawValue: overwritePolicyRaw) else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "unsupported recording overwrite policy: \(overwritePolicyRaw)"
+            )
+        }
+        let destination = try AVCPreparedRecordingDestination(
+            path: avcRecordingPath(pathBytes, length: pathLength),
+            overwritePolicy: overwritePolicy
+        )
+        guard FileManager.default.createFile(
+            atPath: destination.stagingURL.path,
+            contents: Data("staged".utf8)
+        ) else {
+            throw BridgeError.message("failed to create synthetic staged recording")
+        }
+
+        let nativeError: Error?
+        switch nativeErrorMode {
+        case 0:
+            nativeError = nil
+        case 1:
+            nativeError = NSError(
+                domain: "AVCaptureBridgeSyntheticRecording",
+                code: 1
+            )
+        case 2:
+            nativeError = NSError(
+                domain: "AVCaptureBridgeSyntheticRecording",
+                code: 2,
+                userInfo: [AVErrorRecordingSuccessfullyFinishedKey: true]
+            )
+        case 3:
+            nativeError = NSError(
+                domain: "AVCaptureBridgeSyntheticRecording",
+                code: 3,
+                userInfo: [AVErrorRecordingSuccessfullyFinishedKey: false]
+            )
+        default:
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "unsupported synthetic recording error mode: \(nativeErrorMode)"
+            )
+        }
+
+        outHadError.pointee = destination.finalize(nativeError: nativeError) != nil
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_OPERATION_FAILED)
+    }
+}
+
+protocol AVCFileRecordingOperationOwner: AnyObject {
+    func recordingOperationDidFinish(_ operation: AVCFileRecordingOperation)
+}
+
+final class AVCFileRecordingOperation: NSObject, AVCaptureFileOutputRecordingDelegate {
+    private weak var owner: AVCFileRecordingOperationOwner?
+    private let destination: AVCPreparedRecordingDestination
+    private let emitHandler: ((String, URL, Error?) -> Void)?
+    private let isRecording: () -> Bool
+    private let stopRecording: () -> Void
+    private let lock = NSLock()
+    private var stopRequested = false
+    private var finished = false
+    private var keepAlive: AVCFileRecordingOperation?
+
+    init(
+        owner: AVCFileRecordingOperationOwner,
+        destination: AVCPreparedRecordingDestination,
+        emitHandler: ((String, URL, Error?) -> Void)?,
+        isRecording: @escaping () -> Bool,
+        stopRecording: @escaping () -> Void
+    ) {
         self.owner = owner
+        self.destination = destination
+        self.emitHandler = emitHandler
+        self.isRecording = isRecording
+        self.stopRecording = stopRecording
+        super.init()
+    }
+
+    var requestedURL: URL {
+        destination.requestedURL
+    }
+
+    var hasCallback: Bool {
+        emitHandler != nil
+    }
+
+    func activate() {
+        keepAlive = self
+    }
+
+    @discardableResult
+    func requestStop() -> Bool {
+        lock.lock()
+        guard !finished, !stopRequested, isRecording() else {
+            lock.unlock()
+            return false
+        }
+        stopRequested = true
+        lock.unlock()
+        stopRecording()
+        return true
+    }
+
+    private func emit(_ kind: String, error: Error?) {
+        emitHandler?(kind, destination.requestedURL, error)
     }
 
     func fileOutput(
@@ -119,7 +363,7 @@ private final class FileRecordingDelegate<Owner: FileRecordingEventOwner>: NSObj
         didStartRecordingTo fileURL: URL,
         from connections: [AVCaptureConnection]
     ) {
-        owner?.emitEvent(kind: "started", fileURL: fileURL, error: nil)
+        emit("started", error: nil)
     }
 
     func fileOutput(
@@ -127,7 +371,7 @@ private final class FileRecordingDelegate<Owner: FileRecordingEventOwner>: NSObj
         didPauseRecordingTo fileURL: URL,
         from connections: [AVCaptureConnection]
     ) {
-        owner?.emitEvent(kind: "paused", fileURL: fileURL, error: nil)
+        emit("paused", error: nil)
     }
 
     func fileOutput(
@@ -135,7 +379,7 @@ private final class FileRecordingDelegate<Owner: FileRecordingEventOwner>: NSObj
         didResumeRecordingTo fileURL: URL,
         from connections: [AVCaptureConnection]
     ) {
-        owner?.emitEvent(kind: "resumed", fileURL: fileURL, error: nil)
+        emit("resumed", error: nil)
     }
 
     func fileOutput(
@@ -144,7 +388,7 @@ private final class FileRecordingDelegate<Owner: FileRecordingEventOwner>: NSObj
         from connections: [AVCaptureConnection],
         error: Error?
     ) {
-        owner?.emitEvent(kind: "willFinish", fileURL: outputFileURL, error: error)
+        emit("willFinish", error: error)
     }
 
     func fileOutput(
@@ -153,33 +397,40 @@ private final class FileRecordingDelegate<Owner: FileRecordingEventOwner>: NSObj
         from connections: [AVCaptureConnection],
         error: Error?
     ) {
-        owner?.emitEvent(kind: "finished", fileURL: outputFileURL, error: error)
-        owner?.finishRecording()
+        let finalError = destination.finalize(nativeError: error)
+        emit("finished", error: finalError)
+        lock.lock()
+        finished = true
+        lock.unlock()
+        owner?.recordingOperationDidFinish(self)
+        keepAlive = nil
     }
 }
 
-private func avcRecordingFilePath(from outputFileURL: URL?) -> String? {
-    let path = outputFileURL?.path
-    guard let path, !path.isEmpty, path != "/" else { return nil }
+func avcRecordingPath(
+    _ bytes: UnsafePointer<UInt8>,
+    length: Int
+) throws -> String {
+    let path = bytes.withMemoryRebound(to: CChar.self, capacity: length) {
+        FileManager.default.string(
+            withFileSystemRepresentation: $0,
+            length: length
+        )
+    }
+    guard !path.isEmpty else {
+        throw BridgeError.status(AVC_INVALID_ARGUMENT, "recording output path is empty")
+    }
     return path
 }
 
-private func avcPrepareRecordingURL(_ outputPath: String) throws -> URL {
-    let url = URL(fileURLWithPath: outputPath)
-    let parentDirectory = url.deletingLastPathComponent()
-    if !parentDirectory.path.isEmpty {
-        try FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
-    }
-    if FileManager.default.fileExists(atPath: url.path) {
-        try FileManager.default.removeItem(at: url)
-    }
-    return url
-}
-
-final class MovieFileOutputBox: CaptureOutputBoxBase, FileRecordingEventOwner {
+final class MovieFileOutputBox: CaptureOutputBoxBase, AVCFileRecordingOperationOwner {
     let movieOutput = AVCaptureMovieFileOutput()
-    fileprivate var recordingDelegate: FileRecordingDelegate<MovieFileOutputBox>?
-    fileprivate var callbackBox: AVCJsonCallbackBox?
+    private let recordingLock = NSLock()
+    private let recordingSlot = AVCDelegateSlot("movie recording delegate")
+    private var recordingOperation: AVCFileRecordingOperation?
+    private var lastOutputURL: URL?
+    private let boundaryLock = NSLock()
+    private let boundarySlot = AVCDelegateSlot("movie file-output delegate")
     private var sampleBufferBoundaryDelegate: FileOutputBoundaryDelegate?
     private var sampleBufferBoundaryCallbackBox: FileOutputSampleBufferCallbackBox?
 
@@ -188,7 +439,11 @@ final class MovieFileOutputBox: CaptureOutputBoxBase, FileRecordingEventOwner {
     }
 
     deinit {
-        clearRecordingState()
+        recordingLock.lock()
+        let operation = recordingOperation
+        recordingOperation = nil
+        recordingLock.unlock()
+        operation?.requestStop()
         clearSampleBufferBoundaryCallback()
     }
 
@@ -199,11 +454,14 @@ final class MovieFileOutputBox: CaptureOutputBoxBase, FileRecordingEventOwner {
         } else {
             spatialVideoCaptureEnabled = nil
         }
+        recordingLock.lock()
+        let operation = recordingOperation
+        recordingLock.unlock()
         return MovieFileOutputInfoPayload(
             connectionCount: movieOutput.connections.count,
             isRecording: movieOutput.isRecording,
             isRecordingPaused: movieOutput.isRecordingPaused,
-            outputFileURL: avcRecordingFilePath(from: movieOutput.outputFileURL),
+            outputFileURL: operation?.requestedURL.path ?? lastOutputURL?.path,
             recordedDuration: CMTimePayload(movieOutput.recordedDuration),
             recordedFileSize: movieOutput.recordedFileSize,
             maxRecordedDuration: CMTimePayload(movieOutput.maxRecordedDuration),
@@ -212,79 +470,154 @@ final class MovieFileOutputBox: CaptureOutputBoxBase, FileRecordingEventOwner {
             movieFragmentInterval: CMTimePayload(movieOutput.movieFragmentInterval),
             metadataCount: movieOutput.metadata?.count ?? 0,
             spatialVideoCaptureEnabled: spatialVideoCaptureEnabled,
-            callbackInstalled: callbackBox != nil,
-            sampleBufferBoundaryCallbackInstalled: sampleBufferBoundaryCallbackBox != nil
+            callbackInstalled: operation?.hasCallback ?? false,
+            sampleBufferBoundaryCallbackInstalled: boundarySlot.isOccupied
         )
     }
 
     func startRecording(
         to outputPath: String,
+        overwritePolicy: AVCRecordingOverwritePolicy,
         callback: AVCJsonCallback?,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
         dropUserData: AVCDropCallback?
     ) throws {
+        let callbackBox = callback.map {
+            AVCJsonCallbackBox(
+                callback: $0,
+                userData: userData,
+                retainUserData: retainUserData,
+                dropUserData: dropUserData
+            )
+        }
+        _ = try startRecording(
+            to: outputPath,
+            overwritePolicy: overwritePolicy,
+            emitHandler: callbackBox.map { callbackBox in
+                { kind, fileURL, error in
+                    callbackBox.emit(
+                        FileRecordingEventPayload(
+                            kind: kind,
+                            fileURL: fileURL.path,
+                            error: error?.localizedDescription
+                        )
+                    )
+                }
+            }
+        )
+    }
+
+    func startRecording(
+        to outputPath: String,
+        overwritePolicy: AVCRecordingOverwritePolicy,
+        emitHandler: ((String, URL, Error?) -> Void)?
+    ) throws -> AVCFileRecordingOperation {
+        let destination = try AVCPreparedRecordingDestination(
+            path: outputPath,
+            overwritePolicy: overwritePolicy
+        )
         guard !movieOutput.isRecording else {
             throw BridgeError.message("movie file output is already recording")
         }
         guard !movieOutput.connections.isEmpty else {
             throw BridgeError.message("movie file output is not attached to a session")
         }
+        let operation = AVCFileRecordingOperation(
+            owner: self,
+            destination: destination,
+            emitHandler: emitHandler,
+            isRecording: { [movieOutput] in movieOutput.isRecording },
+            stopRecording: { [movieOutput] in movieOutput.stopRecording() }
+        )
+        try recordingSlot.acquire(operation)
+        recordingLock.lock()
+        recordingOperation = operation
+        lastOutputURL = destination.requestedURL
+        recordingLock.unlock()
+        operation.activate()
+        movieOutput.startRecording(
+            to: destination.stagingURL,
+            recordingDelegate: operation
+        )
+        return operation
+    }
 
-        let url = try avcPrepareRecordingURL(outputPath)
-        clearRecordingState()
-        if let callback {
-            callbackBox = AVCJsonCallbackBox(callback: callback, userData: userData, dropUserData: dropUserData)
+    func recordingOperationDidFinish(_ operation: AVCFileRecordingOperation) {
+        guard recordingSlot.release(operation) else { return }
+        recordingLock.lock()
+        if recordingOperation === operation {
+            recordingOperation = nil
         }
-        let delegate = FileRecordingDelegate(owner: self)
-        recordingDelegate = delegate
-        movieOutput.startRecording(to: url, recordingDelegate: delegate)
+        recordingLock.unlock()
     }
 
-    func emitEvent(kind: String, fileURL: URL, error: Error?) {
-        callbackBox?.emit(FileRecordingEventPayload(
-            kind: kind,
-            fileURL: fileURL.path,
-            error: error?.localizedDescription
-        ))
-    }
-
-    func finishRecording() {
-        clearRecordingState()
-    }
-
-    func clearRecordingState() {
-        recordingDelegate = nil
-        callbackBox?.dispose()
-        callbackBox = nil
+    @discardableResult
+    func stopRecording() -> Bool {
+        recordingLock.lock()
+        let operation = recordingOperation
+        recordingLock.unlock()
+        return operation?.requestStop() ?? false
     }
 
     func setSampleBufferBoundaryCallback(
         callback: @escaping AVCAudioSampleCallback,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
         dropUserData: AVCDropCallback?
-    ) {
-        clearSampleBufferBoundaryCallback()
-        let box = FileOutputSampleBufferCallbackBox(callback: callback, userData: userData, dropUserData: dropUserData)
+    ) throws {
+        let box = FileOutputSampleBufferCallbackBox(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            dropUserData: dropUserData
+        )
         let delegate = FileOutputBoundaryDelegate { sampleBuffer in
             box.emit(sampleBuffer: sampleBuffer)
         }
+        try boundarySlot.acquire(box)
         movieOutput.delegate = delegate
+        boundaryLock.lock()
         sampleBufferBoundaryDelegate = delegate
         sampleBufferBoundaryCallbackBox = box
+        boundaryLock.unlock()
     }
 
     func clearSampleBufferBoundaryCallback() {
-        movieOutput.delegate = nil
-        sampleBufferBoundaryDelegate = nil
-        sampleBufferBoundaryCallbackBox?.dispose()
-        sampleBufferBoundaryCallbackBox = nil
+        boundaryLock.lock()
+        let box = sampleBufferBoundaryCallbackBox
+        let delegate = sampleBufferBoundaryDelegate
+        if let box, boundarySlot.release(box) {
+            sampleBufferBoundaryDelegate = nil
+            sampleBufferBoundaryCallbackBox = nil
+        }
+        boundaryLock.unlock()
+        if let delegate, movieOutput.delegate === delegate {
+            movieOutput.delegate = nil
+        }
+    }
+
+    func installBoundaryStream(owner: AnyObject, delegate: AVCaptureFileOutputDelegate) throws {
+        try boundarySlot.acquire(owner)
+        movieOutput.delegate = delegate
+    }
+
+    func removeBoundaryStream(owner: AnyObject, delegate: AVCaptureFileOutputDelegate) {
+        guard boundarySlot.release(owner) else { return }
+        if movieOutput.delegate === delegate {
+            movieOutput.delegate = nil
+        }
     }
 }
 
-final class AudioFileOutputBox: CaptureOutputBoxBase, FileRecordingEventOwner {
+final class AudioFileOutputBox: CaptureOutputBoxBase, AVCFileRecordingOperationOwner {
     let audioOutput = AVCaptureAudioFileOutput()
-    fileprivate var recordingDelegate: FileRecordingDelegate<AudioFileOutputBox>?
-    fileprivate var callbackBox: AVCJsonCallbackBox?
+    private let recordingLock = NSLock()
+    private let recordingSlot = AVCDelegateSlot("audio file recording delegate")
+    private var recordingOperation: AVCFileRecordingOperation?
+    private var lastOutputURL: URL?
+    private let boundaryLock = NSLock()
+    private let boundarySlot = AVCDelegateSlot("audio file-output delegate")
     private var sampleBufferBoundaryDelegate: FileOutputBoundaryDelegate?
     private var sampleBufferBoundaryCallbackBox: FileOutputSampleBufferCallbackBox?
 
@@ -293,16 +626,23 @@ final class AudioFileOutputBox: CaptureOutputBoxBase, FileRecordingEventOwner {
     }
 
     deinit {
-        clearRecordingState()
+        recordingLock.lock()
+        let operation = recordingOperation
+        recordingOperation = nil
+        recordingLock.unlock()
+        operation?.requestStop()
         clearSampleBufferBoundaryCallback()
     }
 
     fileprivate func infoPayload() -> AudioFileOutputInfoPayload {
-        AudioFileOutputInfoPayload(
+        recordingLock.lock()
+        let operation = recordingOperation
+        recordingLock.unlock()
+        return AudioFileOutputInfoPayload(
             connectionCount: audioOutput.connections.count,
             isRecording: audioOutput.isRecording,
             isRecordingPaused: audioOutput.isRecordingPaused,
-            outputFileURL: avcRecordingFilePath(from: audioOutput.outputFileURL),
+            outputFileURL: operation?.requestedURL.path ?? lastOutputURL?.path,
             recordedDuration: CMTimePayload(audioOutput.recordedDuration),
             recordedFileSize: audioOutput.recordedFileSize,
             maxRecordedDuration: CMTimePayload(audioOutput.maxRecordedDuration),
@@ -311,18 +651,56 @@ final class AudioFileOutputBox: CaptureOutputBoxBase, FileRecordingEventOwner {
             metadataCount: audioOutput.metadata.count,
             availableOutputFileTypes: AVCaptureAudioFileOutput.availableOutputFileTypes().map(\.rawValue),
             audioSettings: avcEncodeAudioSettings(audioOutput.audioSettings),
-            callbackInstalled: callbackBox != nil,
-            sampleBufferBoundaryCallbackInstalled: sampleBufferBoundaryCallbackBox != nil
+            callbackInstalled: operation?.hasCallback ?? false,
+            sampleBufferBoundaryCallbackInstalled: boundarySlot.isOccupied
         )
     }
 
     func startRecording(
         to outputPath: String,
         outputFileType rawOutputFileType: String,
+        overwritePolicy: AVCRecordingOverwritePolicy,
         callback: AVCJsonCallback?,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
         dropUserData: AVCDropCallback?
     ) throws {
+        let callbackBox = callback.map {
+            AVCJsonCallbackBox(
+                callback: $0,
+                userData: userData,
+                retainUserData: retainUserData,
+                dropUserData: dropUserData
+            )
+        }
+        _ = try startRecording(
+            to: outputPath,
+            outputFileType: rawOutputFileType,
+            overwritePolicy: overwritePolicy,
+            emitHandler: callbackBox.map { callbackBox in
+                { kind, fileURL, error in
+                    callbackBox.emit(
+                        FileRecordingEventPayload(
+                            kind: kind,
+                            fileURL: fileURL.path,
+                            error: error?.localizedDescription
+                        )
+                    )
+                }
+            }
+        )
+    }
+
+    func startRecording(
+        to outputPath: String,
+        outputFileType rawOutputFileType: String,
+        overwritePolicy: AVCRecordingOverwritePolicy,
+        emitHandler: ((String, URL, Error?) -> Void)?
+    ) throws -> AVCFileRecordingOperation {
+        let destination = try AVCPreparedRecordingDestination(
+            path: outputPath,
+            overwritePolicy: overwritePolicy
+        )
         guard !audioOutput.isRecording else {
             throw BridgeError.message("audio file output is already recording")
         }
@@ -334,55 +712,91 @@ final class AudioFileOutputBox: CaptureOutputBoxBase, FileRecordingEventOwner {
         guard AVCaptureAudioFileOutput.availableOutputFileTypes().contains(outputFileType) else {
             throw BridgeError.message("unsupported audio file output type: \(rawOutputFileType)")
         }
+        let operation = AVCFileRecordingOperation(
+            owner: self,
+            destination: destination,
+            emitHandler: emitHandler,
+            isRecording: { [audioOutput] in audioOutput.isRecording },
+            stopRecording: { [audioOutput] in audioOutput.stopRecording() }
+        )
+        try recordingSlot.acquire(operation)
+        recordingLock.lock()
+        recordingOperation = operation
+        lastOutputURL = destination.requestedURL
+        recordingLock.unlock()
+        operation.activate()
+        audioOutput.startRecording(
+            to: destination.stagingURL,
+            outputFileType: outputFileType,
+            recordingDelegate: operation
+        )
+        return operation
+    }
 
-        let url = try avcPrepareRecordingURL(outputPath)
-        clearRecordingState()
-        if let callback {
-            callbackBox = AVCJsonCallbackBox(callback: callback, userData: userData, dropUserData: dropUserData)
+    func recordingOperationDidFinish(_ operation: AVCFileRecordingOperation) {
+        guard recordingSlot.release(operation) else { return }
+        recordingLock.lock()
+        if recordingOperation === operation {
+            recordingOperation = nil
         }
-        let delegate = FileRecordingDelegate(owner: self)
-        recordingDelegate = delegate
-        audioOutput.startRecording(to: url, outputFileType: outputFileType, recordingDelegate: delegate)
+        recordingLock.unlock()
     }
 
-    func emitEvent(kind: String, fileURL: URL, error: Error?) {
-        callbackBox?.emit(FileRecordingEventPayload(
-            kind: kind,
-            fileURL: fileURL.path,
-            error: error?.localizedDescription
-        ))
-    }
-
-    func finishRecording() {
-        clearRecordingState()
-    }
-
-    func clearRecordingState() {
-        recordingDelegate = nil
-        callbackBox?.dispose()
-        callbackBox = nil
+    @discardableResult
+    func stopRecording() -> Bool {
+        recordingLock.lock()
+        let operation = recordingOperation
+        recordingLock.unlock()
+        return operation?.requestStop() ?? false
     }
 
     func setSampleBufferBoundaryCallback(
         callback: @escaping AVCAudioSampleCallback,
         userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
         dropUserData: AVCDropCallback?
-    ) {
-        clearSampleBufferBoundaryCallback()
-        let box = FileOutputSampleBufferCallbackBox(callback: callback, userData: userData, dropUserData: dropUserData)
+    ) throws {
+        let box = FileOutputSampleBufferCallbackBox(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            dropUserData: dropUserData
+        )
         let delegate = FileOutputBoundaryDelegate { sampleBuffer in
             box.emit(sampleBuffer: sampleBuffer)
         }
+        try boundarySlot.acquire(box)
         audioOutput.delegate = delegate
+        boundaryLock.lock()
         sampleBufferBoundaryDelegate = delegate
         sampleBufferBoundaryCallbackBox = box
+        boundaryLock.unlock()
     }
 
     func clearSampleBufferBoundaryCallback() {
-        audioOutput.delegate = nil
-        sampleBufferBoundaryDelegate = nil
-        sampleBufferBoundaryCallbackBox?.dispose()
-        sampleBufferBoundaryCallbackBox = nil
+        boundaryLock.lock()
+        let box = sampleBufferBoundaryCallbackBox
+        let delegate = sampleBufferBoundaryDelegate
+        if let box, boundarySlot.release(box) {
+            sampleBufferBoundaryDelegate = nil
+            sampleBufferBoundaryCallbackBox = nil
+        }
+        boundaryLock.unlock()
+        if let delegate, audioOutput.delegate === delegate {
+            audioOutput.delegate = nil
+        }
+    }
+
+    func installBoundaryStream(owner: AnyObject, delegate: AVCaptureFileOutputDelegate) throws {
+        try boundarySlot.acquire(owner)
+        audioOutput.delegate = delegate
+    }
+
+    func removeBoundaryStream(owner: AnyObject, delegate: AVCaptureFileOutputDelegate) {
+        guard boundarySlot.release(owner) else { return }
+        if audioOutput.delegate === delegate {
+            audioOutput.delegate = nil
+        }
     }
 }
 
@@ -415,20 +829,35 @@ public func av_capture_movie_file_output_info_json(
 @_cdecl("av_capture_movie_file_output_start_recording")
 public func av_capture_movie_file_output_start_recording(
     _ outputPtr: UnsafeMutableRawPointer,
-    _ outputPathPtr: UnsafePointer<CChar>,
+    _ outputPathBytes: UnsafePointer<UInt8>,
+    _ outputPathLength: Int,
+    _ overwritePolicyRaw: Int32,
     _ callback: AVCJsonCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
     let output = avcUnretained(outputPtr, as: MovieFileOutputBox.self)
-    let outputPath = String(cString: outputPathPtr)
     do {
-        try output.startRecording(to: outputPath, callback: callback, userData: userData, dropUserData: dropUserData)
+        guard let overwritePolicy = AVCRecordingOverwritePolicy(rawValue: overwritePolicyRaw) else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "unsupported recording overwrite policy: \(overwritePolicyRaw)"
+            )
+        }
+        try output.startRecording(
+            to: avcRecordingPath(outputPathBytes, length: outputPathLength),
+            overwritePolicy: overwritePolicy,
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            dropUserData: dropUserData
+        )
         return AVC_OK
     } catch {
         outErrorMessage?.pointee = ffiString(error.localizedDescription)
-        return AVC_OUTPUT_ERROR
+        return avcStatus(for: error, default: AVC_OUTPUT_ERROR)
     }
 }
 
@@ -437,6 +866,7 @@ public func av_capture_movie_file_output_set_sample_buffer_boundary_callback(
     _ outputPtr: UnsafeMutableRawPointer,
     _ callback: AVCAudioSampleCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
@@ -445,8 +875,18 @@ public func av_capture_movie_file_output_set_sample_buffer_boundary_callback(
         return AVC_CALLBACK_ERROR
     }
     let output = avcUnretained(outputPtr, as: MovieFileOutputBox.self)
-    output.setSampleBufferBoundaryCallback(callback: callback, userData: userData, dropUserData: dropUserData)
-    return AVC_OK
+    do {
+        try output.setSampleBufferBoundaryCallback(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            dropUserData: dropUserData
+        )
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_CALLBACK_ERROR)
+    }
 }
 
 @_cdecl("av_capture_movie_file_output_clear_sample_buffer_boundary_callback")
@@ -455,8 +895,10 @@ public func av_capture_movie_file_output_clear_sample_buffer_boundary_callback(_
 }
 
 @_cdecl("av_capture_movie_file_output_stop_recording")
-public func av_capture_movie_file_output_stop_recording(_ outputPtr: UnsafeMutableRawPointer) {
-    avcUnretained(outputPtr, as: MovieFileOutputBox.self).movieOutput.stopRecording()
+public func av_capture_movie_file_output_stop_recording(
+    _ outputPtr: UnsafeMutableRawPointer
+) -> Bool {
+    avcUnretained(outputPtr, as: MovieFileOutputBox.self).stopRecording()
 }
 
 @_cdecl("av_capture_movie_file_output_pause_recording")
@@ -564,28 +1006,38 @@ public func av_capture_audio_file_output_set_audio_settings_json(
 @_cdecl("av_capture_audio_file_output_start_recording")
 public func av_capture_audio_file_output_start_recording(
     _ outputPtr: UnsafeMutableRawPointer,
-    _ outputPathPtr: UnsafePointer<CChar>,
+    _ outputPathBytes: UnsafePointer<UInt8>,
+    _ outputPathLength: Int,
     _ outputFileTypePtr: UnsafePointer<CChar>,
+    _ overwritePolicyRaw: Int32,
     _ callback: AVCJsonCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
     let output = avcUnretained(outputPtr, as: AudioFileOutputBox.self)
-    let outputPath = String(cString: outputPathPtr)
     let outputFileType = String(cString: outputFileTypePtr)
     do {
+        guard let overwritePolicy = AVCRecordingOverwritePolicy(rawValue: overwritePolicyRaw) else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "unsupported recording overwrite policy: \(overwritePolicyRaw)"
+            )
+        }
         try output.startRecording(
-            to: outputPath,
+            to: avcRecordingPath(outputPathBytes, length: outputPathLength),
             outputFileType: outputFileType,
+            overwritePolicy: overwritePolicy,
             callback: callback,
             userData: userData,
+            retainUserData: retainUserData,
             dropUserData: dropUserData
         )
         return AVC_OK
     } catch {
         outErrorMessage?.pointee = ffiString(error.localizedDescription)
-        return AVC_OUTPUT_ERROR
+        return avcStatus(for: error, default: AVC_OUTPUT_ERROR)
     }
 }
 
@@ -594,6 +1046,7 @@ public func av_capture_audio_file_output_set_sample_buffer_boundary_callback(
     _ outputPtr: UnsafeMutableRawPointer,
     _ callback: AVCAudioSampleCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
@@ -602,8 +1055,18 @@ public func av_capture_audio_file_output_set_sample_buffer_boundary_callback(
         return AVC_CALLBACK_ERROR
     }
     let output = avcUnretained(outputPtr, as: AudioFileOutputBox.self)
-    output.setSampleBufferBoundaryCallback(callback: callback, userData: userData, dropUserData: dropUserData)
-    return AVC_OK
+    do {
+        try output.setSampleBufferBoundaryCallback(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            dropUserData: dropUserData
+        )
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_CALLBACK_ERROR)
+    }
 }
 
 @_cdecl("av_capture_audio_file_output_clear_sample_buffer_boundary_callback")
@@ -612,8 +1075,10 @@ public func av_capture_audio_file_output_clear_sample_buffer_boundary_callback(_
 }
 
 @_cdecl("av_capture_audio_file_output_stop_recording")
-public func av_capture_audio_file_output_stop_recording(_ outputPtr: UnsafeMutableRawPointer) {
-    avcUnretained(outputPtr, as: AudioFileOutputBox.self).audioOutput.stopRecording()
+public func av_capture_audio_file_output_stop_recording(
+    _ outputPtr: UnsafeMutableRawPointer
+) -> Bool {
+    avcUnretained(outputPtr, as: AudioFileOutputBox.self).stopRecording()
 }
 
 @_cdecl("av_capture_audio_file_output_pause_recording")

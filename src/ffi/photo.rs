@@ -37,4 +37,14 @@ extern "C" {
         photo: *mut c_void,
         out_error_message: *mut *mut c_char,
     ) -> *mut c_void;
+    pub fn av_capture_photo_pixel_buffer(
+        photo: *mut c_void,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut c_void;
+    pub fn av_capture_photo_file_data_representation(
+        photo: *mut c_void,
+        out_length: *mut usize,
+        out_error_message: *mut *mut c_char,
+    ) -> *mut u8;
+    pub fn av_capture_photo_file_data_free(bytes: *mut u8);
 }

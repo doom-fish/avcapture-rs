@@ -113,9 +113,14 @@ pub struct CameraCalibrationData {
 }
 
 impl CameraCalibrationData {
+    /// Adopts a +1 retained Swift `CameraCalibrationDataBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `CameraCalibrationDataBox` returned at +1 by a compatible
+    /// AVCapture Swift bridge. It is not a native `AVCameraCalibrationData` pointer.
     #[must_use]
-    /// Wraps an existing retained `AVCameraCalibrationData` pointer.
-    pub const fn from_raw(ptr: *mut c_void) -> Self {
+    pub const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 

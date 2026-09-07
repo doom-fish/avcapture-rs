@@ -11,6 +11,13 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct WireEnvelope<T> {
+    schema_version: u64,
+    payload: T,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RawCaptureOutputInfo {
     connection_count: usize,
     deferred_start_supported: Option<bool>,
@@ -34,6 +41,7 @@ struct RawAudioFileOutputInfo {
     connection_count: usize,
     is_recording: bool,
     is_recording_paused: bool,
+    #[serde(rename = "outputFileURL")]
     output_file_url: Option<String>,
     available_output_file_types: Vec<String>,
     audio_settings: Option<RawAudioSettings>,
@@ -44,7 +52,10 @@ struct RawAudioFileOutputInfo {
 unsafe fn decode_json<T: DeserializeOwned>(json_ptr: *mut c_char) -> T {
     let json = CStr::from_ptr(json_ptr).to_string_lossy().into_owned();
     ffi::core::avc_string_free(json_ptr);
-    serde_json::from_str(&json).expect("bridge returned invalid JSON")
+    let envelope: WireEnvelope<T> =
+        serde_json::from_str(&json).expect("bridge returned invalid JSON");
+    assert_eq!(envelope.schema_version, 1);
+    envelope.payload
 }
 
 unsafe fn take_error(err_ptr: *mut c_char) -> String {
@@ -97,15 +108,27 @@ fn movie_file_output_smoke() -> common::TestResult {
         .join("test-artifacts");
     fs::create_dir_all(&artifact_dir)?;
     let artifact_path = artifact_dir.join("movie-file-output-smoke.mov");
+    fs::write(&artifact_path, b"sentinel")?;
     let err = output
         .start_recording_with_handler(&artifact_path, |event| {
             eprintln!("unexpected movie recording callback: {event:?}");
         })
         .expect_err("disconnected movie output should refuse recording requests");
-    assert!(matches!(
+    assert_eq!(
         err,
-        AVCaptureError::OutputError(_) | AVCaptureError::OperationFailed(_)
-    ));
+        AVCaptureError::OutputFileExists(artifact_path.display().to_string())
+    );
+    assert_eq!(fs::read(&artifact_path)?, b"sentinel");
+    fs::remove_file(&artifact_path)?;
+
+    let directory_path = artifact_dir.join("movie-output-directory");
+    fs::create_dir_all(&directory_path)?;
+    let err = output
+        .start_recording_with_options(&directory_path, RecordingOptions::overwrite_regular_file())
+        .expect_err("explicit overwrite must reject directories");
+    assert!(matches!(err, AVCaptureError::InvalidArgument(_)));
+    assert!(directory_path.is_dir());
+    fs::remove_dir(&directory_path)?;
     Ok(())
 }
 
@@ -118,7 +141,10 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
     assert!(err.is_null(), "unexpected create error: {err:?}");
     assert!(!output_ptr.is_null());
 
-    let settings_json = serde_json::to_string(&AudioOutputSettings::pcm_i16(48_000.0, 2))?;
+    let settings_json = serde_json::to_string(&serde_json::json!({
+        "schemaVersion": 1,
+        "payload": AudioOutputSettings::pcm_i16(48_000.0, 2),
+    }))?;
     let settings_json = CString::new(settings_json)?;
     let status = unsafe {
         ffi::movie_file_output::av_capture_audio_file_output_set_audio_settings_json(
@@ -169,6 +195,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
             Some(sample_buffer_boundary_callback),
             ptr::null_mut(),
             None,
+            None,
             &mut err,
         )
     };
@@ -205,15 +232,18 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
         .join("test-artifacts");
     fs::create_dir_all(&artifact_dir)?;
     let artifact_path = artifact_dir.join("audio-file-output-smoke.caf");
-    let artifact_path = CString::new(artifact_path.to_string_lossy().into_owned())?;
+    let artifact_path = artifact_path.as_os_str().as_encoded_bytes();
     let output_file_type = CString::new(info.available_output_file_types[0].clone())?;
     let status = unsafe {
         ffi::movie_file_output::av_capture_audio_file_output_start_recording(
             output_ptr,
             artifact_path.as_ptr(),
+            artifact_path.len(),
             output_file_type.as_ptr(),
+            RecordingOverwritePolicy::FailIfExists as i32,
             None,
             ptr::null_mut(),
+            None,
             None,
             &mut err,
         )
@@ -229,4 +259,17 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
         ffi::movie_file_output::av_capture_audio_file_output_release(output_ptr.cast::<c_void>());
     }
     Ok(())
+}
+
+#[test]
+fn recording_payload_fixtures_use_url_acronyms() {
+    let movie: MovieRecordingEvent =
+        serde_json::from_str(r#"{"kind":"started","fileURL":"/tmp/movie.mov","error":null}"#)
+            .expect("Swift movie recording payload should decode");
+    assert_eq!(movie.file_url, "/tmp/movie.mov");
+
+    let audio: AudioFileRecordingEvent =
+        serde_json::from_str(r#"{"kind":"finished","fileURL":"/tmp/audio.caf","error":null}"#)
+            .expect("Swift audio recording payload should decode");
+    assert_eq!(audio.file_url, "/tmp/audio.caf");
 }

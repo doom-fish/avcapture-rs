@@ -19,6 +19,14 @@ pub type VideoSampleCallback = unsafe extern "C" fn(
     sample_buffer: *mut c_void,
     pixel_buffer: *mut c_void,
 );
+pub type VideoDataOutputEventCallback = unsafe extern "C" fn(
+    userdata: *mut c_void,
+    kind: i32,
+    sample_buffer: *mut c_void,
+    pixel_buffer: *mut c_void,
+    dropped_reason: *mut c_char,
+    dropped_total: u64,
+);
 pub type AudioSampleCallback =
     unsafe extern "C" fn(userdata: *mut c_void, sample_buffer: *mut c_void);
 pub type JsonCallback = unsafe extern "C" fn(userdata: *mut c_void, payload: *mut c_char);
@@ -55,4 +63,10 @@ pub mod status {
     pub const OUTPUT_ERROR: i32 = -5;
     pub const CALLBACK_ERROR: i32 = -6;
     pub const OPERATION_FAILED: i32 = -7;
+    pub const DELEGATE_SLOT_OCCUPIED: i32 = -8;
+    pub const UNSUPPORTED_PLATFORM: i32 = -9;
+    pub const MAIN_THREAD_REQUIRED: i32 = -10;
+    pub const OUTPUT_FILE_EXISTS: i32 = -11;
+    pub const CANCELLED: i32 = -12;
+    pub const BRIDGE_PROTOCOL: i32 = -13;
 }

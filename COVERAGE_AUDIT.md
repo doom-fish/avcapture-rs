@@ -27,7 +27,7 @@ COVERAGE_PCT: 100.0%
 | AVCaptureFlashMode | enum | AVCaptureDevice.h | CaptureFlashMode |
 | AVCaptureTorchMode | enum | AVCaptureDevice.h | CaptureTorchMode |
 | AVCaptureFileOutput | interface | AVCaptureFileOutput.h | MovieFileOutput / AudioFileOutput (base recording properties/methods) |
-| AVCaptureFileOutputRecordingDelegate | protocol | AVCaptureFileOutput.h | MovieFileOutput::start_recording_with_handler / AudioFileOutput::start_recording_with_handler |
+| AVCaptureFileOutputRecordingDelegate | protocol | AVCaptureFileOutput.h | MovieFileOutput / AudioFileOutput recording handlers plus async finalization |
 | AVCaptureMovieFileOutput | interface | AVCaptureFileOutput.h | MovieFileOutput / MovieFileOutputInfo |
 | AVCaptureDeviceInput | interface | AVCaptureInput.h | DeviceInput / DeviceInputInfo |
 | AVCaptureInput | interface | AVCaptureInput.h | CaptureInputRef / CaptureInputInfo |
@@ -39,7 +39,7 @@ COVERAGE_PCT: 100.0%
 | AVCapturePhotoCaptureDelegate | protocol | AVCapturePhotoOutput.h | PhotoOutput::capture_photo |
 | AVCapturePhotoOutput | interface | AVCapturePhotoOutput.h | PhotoOutput / PhotoOutputInfo |
 | AVCapturePhotoOutputCaptureReadiness | enum | AVCapturePhotoOutput.h | PhotoOutputCaptureReadiness / PhotoOutput::capture_readiness / PhotoOutputInfo::capture_readiness |
-| AVCapturePhoto | interface | AVCapturePhotoOutput.h | Photo / PhotoInfo / PhotoCaptureEvent::photo |
+| AVCapturePhoto | interface | AVCapturePhotoOutput.h | Photo / PhotoInfo / retained pixel buffer / encoded file data |
 | AVCapturePhotoQualityPrioritization | enum | AVCapturePhotoOutput.h | PhotoQualityPrioritization / PhotoSettings / PhotoOutput |
 | AVCapturePhotoSettings | interface | AVCapturePhotoOutput.h | PhotoSettings / PhotoSettingsInfo / PhotoOutput::capture_photo_with_settings |
 | AVCaptureConnection | interface | AVCaptureSession.h | CaptureConnection / CaptureConnectionInfo |
@@ -58,8 +58,8 @@ COVERAGE_PCT: 100.0%
 | AVCaptureSessionPresetiFrame1280x720 | constant | AVCaptureSessionPreset.h | CaptureSessionPreset::IFrame1280x720 |
 | AVCaptureSessionPresetiFrame960x540 | constant | AVCaptureSessionPreset.h | CaptureSessionPreset::IFrame960x540 |
 | AVCaptureVideoDataOutput | interface | AVCaptureVideoDataOutput.h | VideoDataOutput / VideoDataOutputInfo |
-| AVCaptureVideoDataOutputSampleBufferDelegate | protocol | AVCaptureVideoDataOutput.h | VideoDataOutput::set_sample_buffer_handler |
-| AVCaptureVideoPreviewLayer | interface | AVCaptureVideoPreviewLayer.h | VideoPreviewLayer / VideoPreviewLayerInfo |
+| AVCaptureVideoDataOutputSampleBufferDelegate | protocol | AVCaptureVideoDataOutput.h | VideoDataOutput::set_sample_buffer_event_handler (didOutput + didDrop) |
+| AVCaptureVideoPreviewLayer | interface | AVCaptureVideoPreviewLayer.h | VideoPreviewLayer / RetainedNativeLayer / frame, bounds, layout, and caller-owned hosting |
 
 ## 🟢 VERIFIED (continued)
 | Symbol | Kind | Header | Wrapped by |

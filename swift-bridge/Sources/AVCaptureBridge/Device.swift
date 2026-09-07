@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 private struct CaptureDeviceInputSourcePayload: Codable {
-    let inputSourceId: String
+    let inputSourceID: String
     let localizedName: String
 }
 
@@ -18,7 +18,7 @@ private struct CaptureDeviceRotationCoordinatorInfoPayload: Codable {
 }
 
 private struct CaptureDeviceDetailsPayload: Codable {
-    let uniqueId: String
+    let uniqueID: String
     let localizedName: String
     let manufacturer: String
     let transportType: Int?
@@ -43,7 +43,7 @@ private struct CaptureDeviceDetailsPayload: Codable {
     let transportControlsPlaybackMode: Int32?
     let transportControlsSpeed: Float?
     let inputSources: [CaptureDeviceInputSourcePayload]
-    let activeInputSourceId: String?
+    let activeInputSourceID: String?
     let primaryConstituentDeviceSwitchingBehavior: Int32?
     let primaryConstituentDeviceRestrictedSwitchingBehaviorConditions: UInt64?
     let activePrimaryConstituentDeviceSwitchingBehavior: Int32?
@@ -116,7 +116,7 @@ private func avcDeviceInfoPayload(from device: AVCaptureDevice) -> CaptureDevice
 
 private func avcDeviceInputSourcePayload(from inputSource: AVCaptureDevice.InputSource) -> CaptureDeviceInputSourcePayload {
     CaptureDeviceInputSourcePayload(
-        inputSourceId: inputSource.inputSourceID,
+        inputSourceID: inputSource.inputSourceID,
         localizedName: inputSource.localizedName
     )
 }
@@ -232,7 +232,7 @@ private func avcDeviceDetailsPayload(from device: AVCaptureDevice) -> CaptureDev
         : nil
 
     let inputSources = device.inputSources.map(avcDeviceInputSourcePayload)
-    let activeInputSourceId = device.activeInputSource?.inputSourceID
+    let activeInputSourceID = device.activeInputSource?.inputSourceID
 
     let primaryConstituentDeviceSwitchingBehavior: Int32?
     let primaryConstituentDeviceRestrictedSwitchingBehaviorConditions: UInt64?
@@ -327,7 +327,7 @@ private func avcDeviceDetailsPayload(from device: AVCaptureDevice) -> CaptureDev
     }
 
     return CaptureDeviceDetailsPayload(
-        uniqueId: device.uniqueID,
+        uniqueID: device.uniqueID,
         localizedName: device.localizedName,
         manufacturer: device.manufacturer,
         transportType: Int(device.transportType),
@@ -352,7 +352,7 @@ private func avcDeviceDetailsPayload(from device: AVCaptureDevice) -> CaptureDev
         transportControlsPlaybackMode: transportControlsPlaybackMode,
         transportControlsSpeed: transportControlsSpeed,
         inputSources: inputSources,
-        activeInputSourceId: activeInputSourceId,
+        activeInputSourceID: activeInputSourceID,
         primaryConstituentDeviceSwitchingBehavior: primaryConstituentDeviceSwitchingBehavior,
         primaryConstituentDeviceRestrictedSwitchingBehaviorConditions: primaryConstituentDeviceRestrictedSwitchingBehaviorConditions,
         activePrimaryConstituentDeviceSwitchingBehavior: activePrimaryConstituentDeviceSwitchingBehavior,

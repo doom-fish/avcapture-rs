@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.6.0] - 2026-09-07
+
+### Added
+
+- Retained `Photo::pixel_buffer()` and owned `Photo::file_data_representation()` accessors for captured macOS photo data.
+- `VideoDataOutputEvent` delivery for native samples and `didDrop` callbacks, including a total dropped-frame count and optional native reason.
+- Additive `VideoDataOutputEventStream` support while preserving the existing sample-only `VideoSampleBufferEvent` fields and `VideoSampleBufferStream::subscribe` API.
+- Restored the original three-argument `VideoSampleCallback` ABI and legacy video callback/subscription symbols; sample-and-drop delivery now uses separately named additive callback types and exports.
+- Restored every pre-existing async bridge export to its HEAD parameter count, ordering, types, and caller-owned context ABI. Safe Rust now uses additive `_owned` or `_with_options_owned` exports for retained contexts, typed status, byte paths, and recording policies.
+- `RecordingOptions` / `RecordingOverwritePolicy`, async `stop_and_finalize()`, callback diagnostics, and preview-layer native handle, frame, bounds, layout, and host-layer APIs.
+
+### Changed (breaking)
+
+- Sealed `CaptureInputRef` and `CaptureOutputRef`; all retained Swift bridge-box adoption constructors are now crate-private and unsafe with exact +1 box contracts.
+- Migrated retained `CMSampleBuffer` and `CVPixelBuffer` adoption to the final
+  explicit unsafe `apple-cf` ownership contract while preserving the existing
+  retained-object behavior for callers.
+- Rust/Swift JSON now uses a versioned envelope and explicit acronym keys/legacy aliases.
+- Delegate-backed handlers and streams now use exclusive identity-checked registration and return `DelegateSlotOccupied` instead of replacing an existing owner.
+- Photo capture retains its bridge completion owner; dropping a future cancels the waiter while native capture continues to final cleanup. `PhotoSettings` is single-use for capture.
+- Recording now stages output in the destination directory and atomically finalizes it. Existing paths are preserved by default; explicit overwrite is limited to regular files.
+- Preview-layer APIs are main-thread-only and operate on caller-owned layer hierarchies.
+- Raised in-family requirements to `apple-cf >=0.10, <0.11` and
+  `doom-fish-utils >=0.4, <0.5`.
+
+### Fixed
+
+- Prevented async callback context use-after-free and callback-queue self-deadlocks during stream teardown or callback-triggered drop.
+- Ensured owned movie/audio recording exports release transferred callback contexts exactly once when callback, overwrite-policy, or path validation fails before bridge construction.
+- Serialized synchronously reentrant photo-readiness callbacks without recursive mutable closure aliasing.
+- Corrected `fileURL`, `outputFileURL`, `outputDeviceUniqueID`, `uniqueID`, `displayID`, and `availableVideoCVPixelFormatTypes` payload keys and stopped discarding callback decode failures.
+- Validated manual mirroring, metadata type subsets, and single-use photo settings before native exception paths.
+- Replaced the macOS video pixel-format empty stub with `availableVideoPixelFormatTypes`; raw-photo formats are explicitly unsupported on macOS.
+
 ## [0.5.0] - 2026-05-20
 
 ### Added

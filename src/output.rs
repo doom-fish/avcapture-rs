@@ -12,6 +12,10 @@ use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{cstring, parse_json_and_free};
 
+pub(crate) mod sealed {
+    pub trait Sealed {}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCaptureOutput` state.
@@ -41,7 +45,7 @@ pub enum AVCaptureOutputDataDroppedReason {
 
 impl AVCaptureOutputDataDroppedReason {
     #[must_use]
-    /// Wraps an existing `AVCaptureOutputDataDroppedReason` pointer.
+    /// Decodes an `AVCaptureOutputDataDroppedReason` raw value.
     pub fn from_raw(raw: impl Into<String>) -> Self {
         let raw = raw.into();
         match raw.as_str() {
@@ -94,19 +98,21 @@ impl fmt::Display for AVCaptureOutputDataDroppedReason {
 /// Alias for `AVCaptureOutputDataDroppedReason`.
 pub type CaptureOutputDataDroppedReason = AVCaptureOutputDataDroppedReason;
 
-/// Shared helper methods for wrappers backed by `AVCaptureOutput`.
-pub trait CaptureOutputRef {
-    /// Returns the raw `AVCaptureOutput` pointer.
+/// Shared helper methods for crate-owned wrappers backed by `AVCaptureOutput`.
+pub trait CaptureOutputRef: sealed::Sealed {
+    /// Returns a borrowed Swift `CaptureOutputBoxBase` handle.
+    ///
+    /// The handle is valid only while `self` remains alive and does not transfer ownership.
     fn output_ptr(&self) -> *mut c_void;
 
     /// Returns a snapshot of `AVCaptureOutput` state.
     fn output_info(&self) -> Result<CaptureOutputInfo, AVCaptureError> {
-        output_info_from_ptr(self.output_ptr())
+        unsafe { output_info_from_ptr(self.output_ptr()) }
     }
 
     /// Returns the connections reported by the underlying API.
     fn connections(&self) -> Result<Vec<CaptureConnection>, AVCaptureError> {
-        connections_from_output_ptr(self.output_ptr())
+        unsafe { connections_from_output_ptr(self.output_ptr()) }
     }
 
     /// Returns the connection matching the requested media type, if available.
@@ -114,7 +120,7 @@ pub trait CaptureOutputRef {
         &self,
         media_type: &MediaType,
     ) -> Result<Option<CaptureConnection>, AVCaptureError> {
-        connection_from_output_ptr(self.output_ptr(), media_type)
+        unsafe { connection_from_output_ptr(self.output_ptr(), media_type) }
     }
 
     /// Corresponds to `AVCaptureOutput.deferred_start_supported`.
@@ -128,8 +134,12 @@ pub trait CaptureOutputRef {
     }
 }
 
-/// Corresponds to `AVCapture.output_info_from_ptr`.
-pub fn output_info_from_ptr(ptr_value: *mut c_void) -> Result<CaptureOutputInfo, AVCaptureError> {
+/// # Safety
+///
+/// `ptr_value` must be a live borrowed `CaptureOutputBoxBase` handle produced by this bridge.
+pub(crate) unsafe fn output_info_from_ptr(
+    ptr_value: *mut c_void,
+) -> Result<CaptureOutputInfo, AVCaptureError> {
     let mut err: *mut c_char = ptr::null_mut();
     let json_ptr = unsafe { ffi::output::av_capture_output_info_json(ptr_value, &mut err) };
     if json_ptr.is_null() {
@@ -138,8 +148,10 @@ pub fn output_info_from_ptr(ptr_value: *mut c_void) -> Result<CaptureOutputInfo,
     parse_json_and_free(json_ptr)
 }
 
-/// Corresponds to `AVCapture.connections_from_output_ptr`.
-pub fn connections_from_output_ptr(
+/// # Safety
+///
+/// `ptr_value` must be a live borrowed `CaptureOutputBoxBase` handle produced by this bridge.
+pub(crate) unsafe fn connections_from_output_ptr(
     ptr_value: *mut c_void,
 ) -> Result<Vec<CaptureConnection>, AVCaptureError> {
     let count = unsafe { ffi::output::av_capture_output_connections_count(ptr_value) };
@@ -152,13 +164,15 @@ pub fn connections_from_output_ptr(
         if connection_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
-        connections.push(CaptureConnection::from_raw(connection_ptr));
+        connections.push(unsafe { CaptureConnection::from_retained_bridge_box(connection_ptr) });
     }
     Ok(connections)
 }
 
-/// Corresponds to `AVCapture.connection_from_output_ptr`.
-pub fn connection_from_output_ptr(
+/// # Safety
+///
+/// `ptr_value` must be a live borrowed `CaptureOutputBoxBase` handle produced by this bridge.
+pub(crate) unsafe fn connection_from_output_ptr(
     ptr_value: *mut c_void,
     media_type: &MediaType,
 ) -> Result<Option<CaptureConnection>, AVCaptureError> {
@@ -177,5 +191,7 @@ pub fn connection_from_output_ptr(
         }
         return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
     }
-    Ok(Some(CaptureConnection::from_raw(connection_ptr)))
+    Ok(Some(unsafe {
+        CaptureConnection::from_retained_bridge_box(connection_ptr)
+    }))
 }

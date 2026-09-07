@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_void};
 
-use super::{DropCallback, JsonCallback};
+use super::{DropCallback, JsonCallback, RetainCallback};
 
 extern "C" {
     pub fn av_capture_session_create(out_error_message: *mut *mut c_char) -> *mut c_void;
@@ -57,6 +57,7 @@ extern "C" {
         queue_label: *const c_char,
         callback: Option<JsonCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;
@@ -66,6 +67,7 @@ extern "C" {
         queue_label: *const c_char,
         callback: Option<JsonCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;

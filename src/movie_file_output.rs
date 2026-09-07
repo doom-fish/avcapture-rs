@@ -2,13 +2,15 @@
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use apple_cf::cm::{CMSampleBuffer, CMTime};
 use serde::Deserialize;
 
 use crate::audio_data_output::AudioOutputSettings;
-use crate::error::{from_swift, AVCaptureError};
+use crate::callback::{ArcContext, SerializedCallback};
+use crate::error::{from_swift, report_callback_error, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{cm_time_serde, cstring, optional_json_cstring, parse_json_and_free};
 use crate::output::CaptureOutputRef;
@@ -24,6 +26,7 @@ pub struct MovieFileOutputInfo {
     pub is_recording: bool,
     /// The is recording paused reported by `AVCaptureMovieFileOutput`.
     pub is_recording_paused: bool,
+    #[serde(rename = "outputFileURL", alias = "outputFileUrl")]
     /// The output file url reported by `AVCaptureMovieFileOutput`.
     pub output_file_url: Option<String>,
     #[serde(with = "cm_time_serde")]
@@ -62,6 +65,7 @@ pub struct AudioFileOutputInfo {
     pub is_recording: bool,
     /// The is recording paused reported by `AVCaptureAudioFileOutput`.
     pub is_recording_paused: bool,
+    #[serde(rename = "outputFileURL", alias = "outputFileUrl")]
     /// The output file url reported by `AVCaptureAudioFileOutput`.
     pub output_file_url: Option<String>,
     #[serde(with = "cm_time_serde")]
@@ -126,6 +130,7 @@ pub enum AudioFileRecordingEventKind {
 pub struct MovieRecordingEvent {
     /// The callback kind reported by the underlying API.
     pub kind: MovieRecordingEventKind,
+    #[serde(rename = "fileURL", alias = "fileUrl")]
     /// The file url reported by `AVCaptureFileOutputRecordingDelegate`.
     pub file_url: String,
     /// The error message, if any.
@@ -138,23 +143,44 @@ pub struct MovieRecordingEvent {
 pub struct AudioFileRecordingEvent {
     /// The callback kind reported by the underlying API.
     pub kind: AudioFileRecordingEventKind,
+    #[serde(rename = "fileURL", alias = "fileUrl")]
     /// The file url reported by `AVCaptureFileOutputRecordingDelegate`.
     pub file_url: String,
     /// The error message, if any.
     pub error: Option<String>,
 }
 
-struct MovieRecordingCallbackState {
-    callback: Box<dyn FnMut(MovieRecordingEvent) + Send + 'static>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(i32)]
+/// Policy used when a recording destination already exists.
+pub enum RecordingOverwritePolicy {
+    /// Fail without modifying the existing path.
+    #[default]
+    FailIfExists = 0,
+    /// Atomically replace an existing regular file after recording completes.
+    OverwriteRegularFile = 1,
 }
 
-struct AudioFileRecordingCallbackState {
-    callback: Box<dyn FnMut(AudioFileRecordingEvent) + Send + 'static>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Options controlling recording destination handling.
+pub struct RecordingOptions {
+    /// The explicit overwrite policy.
+    pub overwrite_policy: RecordingOverwritePolicy,
 }
 
-struct FileOutputSampleBufferCallbackState {
-    callback: Box<dyn FnMut(CMSampleBuffer) + Send + 'static>,
+impl RecordingOptions {
+    #[must_use]
+    /// Creates options that may replace an existing regular file.
+    pub const fn overwrite_regular_file() -> Self {
+        Self {
+            overwrite_policy: RecordingOverwritePolicy::OverwriteRegularFile,
+        }
+    }
 }
+
+type MovieRecordingCallbackState = SerializedCallback<MovieRecordingEvent>;
+type AudioFileRecordingCallbackState = SerializedCallback<AudioFileRecordingEvent>;
+type FileOutputSampleBufferCallbackState = SerializedCallback<CMSampleBuffer>;
 
 /// Safe wrapper around `AVCaptureMovieFileOutput`.
 #[derive(Debug)]
@@ -199,6 +225,9 @@ impl CaptureOutputRef for AudioFileOutput {
         self.ptr
     }
 }
+
+impl crate::output::sealed::Sealed for MovieFileOutput {}
+impl crate::output::sealed::Sealed for AudioFileOutput {}
 
 impl MovieFileOutput {
     /// Creates a new `AVCaptureMovieFileOutput` wrapper.
@@ -295,14 +324,26 @@ impl MovieFileOutput {
 
     /// Starts recording with `AVCaptureMovieFileOutput`.
     pub fn start_recording<P: AsRef<Path>>(&self, output_path: P) -> Result<(), AVCaptureError> {
-        let output_path = output_path_cstring(output_path, "movie output path")?;
+        self.start_recording_with_options(output_path, RecordingOptions::default())
+    }
+
+    /// Starts recording with explicit destination handling options.
+    pub fn start_recording_with_options<P: AsRef<Path>>(
+        &self,
+        output_path: P,
+        options: RecordingOptions,
+    ) -> Result<(), AVCaptureError> {
+        let output_path = output_path_bytes(output_path, "movie output path")?;
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::movie_file_output::av_capture_movie_file_output_start_recording(
                 self.ptr,
                 output_path.as_ptr(),
+                output_path.len(),
+                options.overwrite_policy as i32,
                 None,
                 ptr::null_mut(),
+                None,
                 None,
                 &mut err,
             )
@@ -323,24 +364,42 @@ impl MovieFileOutput {
         P: AsRef<Path>,
         F: FnMut(MovieRecordingEvent) + Send + 'static,
     {
-        let output_path = output_path_cstring(output_path, "movie output path")?;
-        let state = Box::new(MovieRecordingCallbackState {
-            callback: Box::new(callback),
-        });
-        let userdata = Box::into_raw(state).cast::<c_void>();
+        self.start_recording_with_handler_and_options(
+            output_path,
+            RecordingOptions::default(),
+            callback,
+        )
+    }
+
+    /// Starts recording with a handler and explicit destination handling options.
+    pub fn start_recording_with_handler_and_options<P, F>(
+        &self,
+        output_path: P,
+        options: RecordingOptions,
+        callback: F,
+    ) -> Result<(), AVCaptureError>
+    where
+        P: AsRef<Path>,
+        F: FnMut(MovieRecordingEvent) + Send + 'static,
+    {
+        let output_path = output_path_bytes(output_path, "movie output path")?;
+        let state = ArcContext::new(MovieRecordingCallbackState::new(callback));
+        let userdata = state.as_ptr();
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::movie_file_output::av_capture_movie_file_output_start_recording(
                 self.ptr,
                 output_path.as_ptr(),
+                output_path.len(),
+                options.overwrite_policy as i32,
                 Some(movie_recording_trampoline),
                 userdata,
-                Some(movie_recording_callback_drop),
+                Some(movie_recording_callback_retain),
+                Some(movie_recording_callback_release),
                 &mut err,
             )
         };
         if status != ffi::status::OK {
-            unsafe { movie_recording_callback_drop(userdata) };
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
@@ -368,8 +427,8 @@ impl MovieFileOutput {
     }
 
     /// Corresponds to `AVCaptureMovieFileOutput.stop_recording`.
-    pub fn stop_recording(&self) {
-        unsafe { ffi::movie_file_output::av_capture_movie_file_output_stop_recording(self.ptr) };
+    pub fn stop_recording(&self) -> bool {
+        unsafe { ffi::movie_file_output::av_capture_movie_file_output_stop_recording(self.ptr) }
     }
 
     /// Corresponds to `AVCaptureMovieFileOutput.pause_recording`.
@@ -552,16 +611,33 @@ impl AudioFileOutput {
         output_path: P,
         output_file_type: &str,
     ) -> Result<(), AVCaptureError> {
-        let output_path = output_path_cstring(output_path, "audio file output path")?;
+        self.start_recording_with_options(
+            output_path,
+            output_file_type,
+            RecordingOptions::default(),
+        )
+    }
+
+    /// Starts recording with explicit destination handling options.
+    pub fn start_recording_with_options<P: AsRef<Path>>(
+        &self,
+        output_path: P,
+        output_file_type: &str,
+        options: RecordingOptions,
+    ) -> Result<(), AVCaptureError> {
+        let output_path = output_path_bytes(output_path, "audio file output path")?;
         let output_file_type = cstring(output_file_type, "audio file output type")?;
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::movie_file_output::av_capture_audio_file_output_start_recording(
                 self.ptr,
                 output_path.as_ptr(),
+                output_path.len(),
                 output_file_type.as_ptr(),
+                options.overwrite_policy as i32,
                 None,
                 ptr::null_mut(),
+                None,
                 None,
                 &mut err,
             )
@@ -583,26 +659,46 @@ impl AudioFileOutput {
         P: AsRef<Path>,
         F: FnMut(AudioFileRecordingEvent) + Send + 'static,
     {
-        let output_path = output_path_cstring(output_path, "audio file output path")?;
+        self.start_recording_with_handler_and_options(
+            output_path,
+            output_file_type,
+            RecordingOptions::default(),
+            callback,
+        )
+    }
+
+    /// Starts recording with a handler and explicit destination handling options.
+    pub fn start_recording_with_handler_and_options<P, F>(
+        &self,
+        output_path: P,
+        output_file_type: &str,
+        options: RecordingOptions,
+        callback: F,
+    ) -> Result<(), AVCaptureError>
+    where
+        P: AsRef<Path>,
+        F: FnMut(AudioFileRecordingEvent) + Send + 'static,
+    {
+        let output_path = output_path_bytes(output_path, "audio file output path")?;
         let output_file_type = cstring(output_file_type, "audio file output type")?;
-        let state = Box::new(AudioFileRecordingCallbackState {
-            callback: Box::new(callback),
-        });
-        let userdata = Box::into_raw(state).cast::<c_void>();
+        let state = ArcContext::new(AudioFileRecordingCallbackState::new(callback));
+        let userdata = state.as_ptr();
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::movie_file_output::av_capture_audio_file_output_start_recording(
                 self.ptr,
                 output_path.as_ptr(),
+                output_path.len(),
                 output_file_type.as_ptr(),
+                options.overwrite_policy as i32,
                 Some(audio_file_recording_trampoline),
                 userdata,
-                Some(audio_file_recording_callback_drop),
+                Some(audio_file_recording_callback_retain),
+                Some(audio_file_recording_callback_release),
                 &mut err,
             )
         };
         if status != ffi::status::OK {
-            unsafe { audio_file_recording_callback_drop(userdata) };
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
@@ -630,8 +726,8 @@ impl AudioFileOutput {
     }
 
     /// Corresponds to `AVCaptureAudioFileOutput.stop_recording`.
-    pub fn stop_recording(&self) {
-        unsafe { ffi::movie_file_output::av_capture_audio_file_output_stop_recording(self.ptr) };
+    pub fn stop_recording(&self) -> bool {
+        unsafe { ffi::movie_file_output::av_capture_audio_file_output_stop_recording(self.ptr) }
     }
 
     /// Corresponds to `AVCaptureAudioFileOutput.pause_recording`.
@@ -676,6 +772,7 @@ type FileOutputSampleBufferBoundaryCallbackRegistrar = unsafe extern "C" fn(
     output: *mut c_void,
     callback: Option<ffi::AudioSampleCallback>,
     userdata: *mut c_void,
+    retain_userdata: Option<ffi::RetainCallback>,
     drop_userdata: Option<ffi::DropCallback>,
     out_error_message: *mut *mut c_char,
 ) -> i32;
@@ -688,106 +785,279 @@ fn set_file_output_sample_buffer_boundary_handler<F>(
 where
     F: FnMut(CMSampleBuffer) + Send + 'static,
 {
-    let state = Box::new(FileOutputSampleBufferCallbackState {
-        callback: Box::new(callback),
-    });
-    let userdata = Box::into_raw(state).cast::<c_void>();
+    let state = ArcContext::new(FileOutputSampleBufferCallbackState::new(callback));
+    let userdata = state.as_ptr();
     let mut err: *mut c_char = ptr::null_mut();
     let status = unsafe {
         register_callback(
             ptr,
             Some(file_output_sample_buffer_trampoline),
             userdata,
-            Some(file_output_sample_buffer_callback_drop),
+            Some(file_output_sample_buffer_callback_retain),
+            Some(file_output_sample_buffer_callback_release),
             &mut err,
         )
     };
     if status != ffi::status::OK {
-        unsafe { file_output_sample_buffer_callback_drop(userdata) };
         return Err(unsafe { from_swift(status, err) });
     }
     Ok(())
 }
 
-fn output_path_cstring<P: AsRef<Path>>(
+pub(crate) fn output_path_bytes<P: AsRef<Path>>(
     output_path: P,
     what: &str,
-) -> Result<std::ffi::CString, AVCaptureError> {
-    let output_path = output_path.as_ref().to_string_lossy().into_owned();
-    cstring(&output_path, what)
+) -> Result<Vec<u8>, AVCaptureError> {
+    let output_path = output_path.as_ref();
+    let output_path = if output_path.is_absolute() {
+        output_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| {
+                AVCaptureError::InvalidArgument(format!(
+                    "failed to resolve relative {what}: {error}"
+                ))
+            })?
+            .join(output_path)
+    };
+    let bytes = output_path.as_os_str().as_bytes().to_vec();
+    if bytes.is_empty() {
+        return Err(AVCaptureError::InvalidArgument(format!(
+            "{what} must not be empty"
+        )));
+    }
+    if bytes.contains(&0) {
+        return Err(AVCaptureError::InvalidArgument(format!(
+            "{what} contains a NUL byte"
+        )));
+    }
+    Ok(bytes)
 }
 
+#[allow(unused_unsafe)]
 unsafe extern "C" fn file_output_sample_buffer_trampoline(
     userdata: *mut c_void,
     sample_buffer: *mut c_void,
 ) {
-    let Some(state) = userdata
-        .cast::<FileOutputSampleBufferCallbackState>()
-        .as_mut()
-    else {
+    let Some(state) = ArcContext::<FileOutputSampleBufferCallbackState>::get(userdata) else {
         return;
     };
-    let Some(sample_buffer) = CMSampleBuffer::from_raw(sample_buffer) else {
+    let Some(sample_buffer) = (unsafe { CMSampleBuffer::from_raw(sample_buffer) }) else {
         return;
     };
     // User closures can panic; catch them here so the panic doesn't unwind
     // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("file_output_sample_buffer_trampoline", || {
-        (state.callback)(sample_buffer);
-    });
+    state.dispatch("file_output_sample_buffer_trampoline", sample_buffer);
 }
 
-unsafe extern "C" fn file_output_sample_buffer_callback_drop(userdata: *mut c_void) {
-    if userdata.is_null() {
-        return;
-    }
-    drop(Box::from_raw(
-        userdata.cast::<FileOutputSampleBufferCallbackState>(),
-    ));
+unsafe extern "C" fn file_output_sample_buffer_callback_retain(userdata: *mut c_void) {
+    ArcContext::<FileOutputSampleBufferCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn file_output_sample_buffer_callback_release(userdata: *mut c_void) {
+    ArcContext::<FileOutputSampleBufferCallbackState>::release(userdata);
 }
 
 unsafe extern "C" fn movie_recording_trampoline(userdata: *mut c_void, payload: *mut c_char) {
-    let Some(state) = userdata.cast::<MovieRecordingCallbackState>().as_mut() else {
+    let Some(state) = ArcContext::<MovieRecordingCallbackState>::get(userdata) else {
         return;
     };
-    let Ok(event) = parse_json_and_free::<MovieRecordingEvent>(payload) else {
-        return;
+    let event = match parse_json_and_free::<MovieRecordingEvent>(payload) {
+        Ok(event) => event,
+        Err(error) => {
+            report_callback_error("movie_recording_trampoline", error);
+            return;
+        }
     };
-    // User closures can panic; catch them here so the panic doesn't unwind
-    // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("movie_recording_trampoline", || {
-        (state.callback)(event);
-    });
+    state.dispatch("movie_recording_trampoline", event);
 }
 
-unsafe extern "C" fn movie_recording_callback_drop(userdata: *mut c_void) {
-    if userdata.is_null() {
-        return;
-    }
-    drop(Box::from_raw(
-        userdata.cast::<MovieRecordingCallbackState>(),
-    ));
+unsafe extern "C" fn movie_recording_callback_retain(userdata: *mut c_void) {
+    ArcContext::<MovieRecordingCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn movie_recording_callback_release(userdata: *mut c_void) {
+    ArcContext::<MovieRecordingCallbackState>::release(userdata);
 }
 
 unsafe extern "C" fn audio_file_recording_trampoline(userdata: *mut c_void, payload: *mut c_char) {
-    let Some(state) = userdata.cast::<AudioFileRecordingCallbackState>().as_mut() else {
+    let Some(state) = ArcContext::<AudioFileRecordingCallbackState>::get(userdata) else {
         return;
     };
-    let Ok(event) = parse_json_and_free::<AudioFileRecordingEvent>(payload) else {
-        return;
+    let event = match parse_json_and_free::<AudioFileRecordingEvent>(payload) {
+        Ok(event) => event,
+        Err(error) => {
+            report_callback_error("audio_file_recording_trampoline", error);
+            return;
+        }
     };
-    // User closures can panic; catch them here so the panic doesn't unwind
-    // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("audio_file_recording_trampoline", || {
-        (state.callback)(event);
-    });
+    state.dispatch("audio_file_recording_trampoline", event);
 }
 
-unsafe extern "C" fn audio_file_recording_callback_drop(userdata: *mut c_void) {
-    if userdata.is_null() {
-        return;
+unsafe extern "C" fn audio_file_recording_callback_retain(userdata: *mut c_void) {
+    ArcContext::<AudioFileRecordingCallbackState>::retain(userdata);
+}
+
+unsafe extern "C" fn audio_file_recording_callback_release(userdata: *mut c_void) {
+    ArcContext::<AudioFileRecordingCallbackState>::release(userdata);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{output_path_bytes, RecordingOverwritePolicy};
+    use crate::ffi;
+    use std::ffi::CStr;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use std::path::{Path, PathBuf};
+
+    fn artifact_path(name: &str) -> PathBuf {
+        std::env::current_dir()
+            .expect("current directory")
+            .join("target")
+            .join("test-artifacts")
+            .join(format!("{name}-{}", std::process::id()))
     }
-    drop(Box::from_raw(
-        userdata.cast::<AudioFileRecordingCallbackState>(),
-    ));
+
+    fn remove_file_if_present(path: &Path) {
+        if fs::symlink_metadata(path).is_ok() {
+            fs::remove_file(path).expect("remove test file or symlink");
+        }
+    }
+
+    fn finalize_for_test(
+        path: &Path,
+        policy: RecordingOverwritePolicy,
+        native_error_mode: i32,
+    ) -> (i32, bool, String) {
+        let path = output_path_bytes(path, "synthetic recording path").expect("path should encode");
+        let mut had_error = false;
+        let mut error = core::ptr::null_mut();
+        let status = unsafe {
+            ffi::movie_file_output::av_capture_recording_destination_finalize_for_testing(
+                path.as_ptr(),
+                path.len(),
+                policy as i32,
+                native_error_mode,
+                &mut had_error,
+                &mut error,
+            )
+        };
+        let error = if error.is_null() {
+            String::new()
+        } else {
+            let message = unsafe { CStr::from_ptr(error) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { ffi::core::avc_string_free(error) };
+            message
+        };
+        (status, had_error, error)
+    }
+
+    #[test]
+    fn native_error_requires_explicit_success_before_staging_is_moved() {
+        let directory = artifact_path("recording-native-error");
+        fs::create_dir_all(&directory).expect("create test directory");
+        let destination = directory.join("capture.mov");
+        fs::write(&destination, b"original").expect("write destination sentinel");
+
+        let (status, had_error, error) = finalize_for_test(
+            &destination,
+            RecordingOverwritePolicy::OverwriteRegularFile,
+            1,
+        );
+        assert_eq!(status, ffi::status::OK, "{error}");
+        assert!(had_error);
+        assert_eq!(
+            fs::read(&destination).expect("read preserved destination"),
+            b"original"
+        );
+        assert!(!fs::read_dir(&directory)
+            .expect("read test directory")
+            .any(|entry| entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .contains(".capture.mov.avcapture-")));
+
+        let (status, had_error, error) = finalize_for_test(
+            &destination,
+            RecordingOverwritePolicy::OverwriteRegularFile,
+            3,
+        );
+        assert_eq!(status, ffi::status::OK, "{error}");
+        assert!(had_error);
+        assert_eq!(
+            fs::read(&destination).expect("read destination after unsuccessful error"),
+            b"original"
+        );
+
+        let (status, had_error, error) = finalize_for_test(
+            &destination,
+            RecordingOverwritePolicy::OverwriteRegularFile,
+            2,
+        );
+        assert_eq!(status, ffi::status::OK, "{error}");
+        assert!(had_error);
+        assert_eq!(
+            fs::read(&destination).expect("read finalized destination"),
+            b"staged"
+        );
+
+        fs::remove_file(&destination).expect("remove finalized destination");
+        fs::remove_dir(&directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn symlinked_parent_is_allowed_but_destination_symlink_is_rejected() {
+        let real_parent = artifact_path("recording-real-parent");
+        let linked_parent = artifact_path("recording-linked-parent");
+        remove_file_if_present(&linked_parent);
+        fs::create_dir_all(&real_parent).expect("create real parent");
+        symlink(&real_parent, &linked_parent).expect("create parent symlink");
+
+        let linked_destination = linked_parent.join("capture.mov");
+        let (status, had_error, error) = finalize_for_test(
+            &linked_destination,
+            RecordingOverwritePolicy::FailIfExists,
+            0,
+        );
+        assert_eq!(status, ffi::status::OK, "{error}");
+        assert!(!had_error);
+        assert_eq!(
+            fs::read(real_parent.join("capture.mov")).expect("read staged result"),
+            b"staged"
+        );
+
+        fs::remove_file(real_parent.join("capture.mov")).expect("remove staged result");
+        fs::remove_file(&linked_parent).expect("remove parent symlink");
+        fs::remove_dir(&real_parent).expect("remove real parent");
+
+        let destination_parent = artifact_path("recording-destination-symlink");
+        fs::create_dir_all(&destination_parent).expect("create destination parent");
+        let symlink_target = destination_parent.join("target.mov");
+        let destination_symlink = destination_parent.join("capture.mov");
+        fs::write(&symlink_target, b"target").expect("write symlink target");
+        symlink(&symlink_target, &destination_symlink).expect("create destination symlink");
+
+        let (status, _had_error, _error) = finalize_for_test(
+            &destination_symlink,
+            RecordingOverwritePolicy::OverwriteRegularFile,
+            0,
+        );
+        assert_eq!(status, ffi::status::INVALID_ARGUMENT);
+        assert!(fs::symlink_metadata(&destination_symlink)
+            .expect("destination symlink metadata")
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read(&symlink_target).expect("read untouched symlink target"),
+            b"target"
+        );
+
+        fs::remove_file(&destination_symlink).expect("remove destination symlink");
+        fs::remove_file(&symlink_target).expect("remove symlink target");
+        fs::remove_dir(&destination_parent).expect("remove destination parent");
+    }
 }

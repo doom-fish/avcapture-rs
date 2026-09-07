@@ -69,8 +69,12 @@ pub struct CaptureAudioChannel {
 }
 
 impl CaptureAudioChannel {
-    /// Wraps an existing `AVCaptureAudioChannel` pointer.
-    pub const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `AudioChannelBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `AudioChannelBox` returned at +1 by this crate's Swift bridge.
+    pub(crate) const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 
@@ -152,8 +156,12 @@ pub struct CaptureConnection {
 }
 
 impl CaptureConnection {
-    /// Wraps an existing `AVCaptureConnection` pointer.
-    pub const fn from_raw(ptr: *mut c_void) -> Self {
+    /// Adopts a +1 retained Swift `ConnectionBox` handle.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a live `ConnectionBox` returned at +1 by this crate's Swift bridge.
+    pub(crate) const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }
     }
 
@@ -253,7 +261,7 @@ impl CaptureConnection {
             if ptr.is_null() {
                 return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
             }
-            channels.push(CaptureAudioChannel::from_raw(ptr));
+            channels.push(unsafe { CaptureAudioChannel::from_retained_bridge_box(ptr) });
         }
         Ok(channels)
     }
@@ -282,6 +290,12 @@ impl CaptureConnection {
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(())
+    }
+
+    /// Disables automatic mirroring before setting the manual mirrored state.
+    pub fn set_video_mirrored_manually(&self, mirrored: bool) -> Result<(), AVCaptureError> {
+        self.set_automatically_adjusts_video_mirroring(false);
+        self.set_video_mirrored(mirrored)
     }
 
     /// Sets the video rotation angle on `AVCaptureConnection`.

@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 
 private struct ScreenInputInfoPayload: Codable {
-    let displayId: UInt32
+    let displayID: UInt32
     let minFrameDuration: CMTimePayload
     let cropRect: CaptureRectPayload
     let scaleFactor: Double
@@ -32,7 +32,7 @@ final class ScreenInputBox: CaptureInputBoxBase {
 private func avcScreenInputInfoPayload(from box: ScreenInputBox) -> ScreenInputInfoPayload {
     let input = box.screenInput
     return ScreenInputInfoPayload(
-        displayId: box.displayID,
+        displayID: box.displayID,
         minFrameDuration: CMTimePayload(input.minFrameDuration),
         cropRect: CaptureRectPayload(input.cropRect),
         scaleFactor: input.scaleFactor,

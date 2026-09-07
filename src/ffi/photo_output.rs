@@ -1,12 +1,13 @@
 use core::ffi::{c_char, c_void};
 
-use super::{DropCallback, JsonCallback};
+use super::{DropCallback, JsonCallback, RetainCallback};
 
 pub type PhotoCallback =
     unsafe extern "C" fn(userdata: *mut c_void, photo: *mut c_void, payload: *mut c_char);
 
 extern "C" {
     pub fn av_capture_photo_output_create(out_error_message: *mut *mut c_char) -> *mut c_void;
+    pub fn av_capture_photo_output_retain(output: *mut c_void) -> *mut c_void;
     pub fn av_capture_photo_output_release(output: *mut c_void);
     pub fn av_capture_photo_output_info_json(
         output: *mut c_void,
@@ -31,6 +32,7 @@ extern "C" {
         settings: *mut c_void,
         callback: Option<PhotoCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;
@@ -49,6 +51,7 @@ extern "C" {
         coordinator: *mut c_void,
         callback: Option<JsonCallback>,
         userdata: *mut c_void,
+        retain_userdata: Option<RetainCallback>,
         drop_userdata: Option<DropCallback>,
         out_error_message: *mut *mut c_char,
     ) -> i32;

@@ -68,44 +68,7 @@ private struct IndexPickerActionPayload: Codable {
     let selectedIndex: Int
 }
 
-private final class SessionJsonCallbackBox {
-    let callback: AVCJsonCallback
-    let userData: UnsafeMutableRawPointer?
-    let dropUserData: AVCDropCallback?
-    private var disposed = false
-
-    init(
-        callback: @escaping AVCJsonCallback,
-        userData: UnsafeMutableRawPointer?,
-        dropUserData: AVCDropCallback?
-    ) {
-        self.callback = callback
-        self.userData = userData
-        self.dropUserData = dropUserData
-    }
-
-    deinit {
-        dispose()
-    }
-
-    func emit<T: Encodable>(_ payload: T) {
-        guard !disposed,
-              let json = try? avcEncodeJSON(payload),
-              let payloadPtr = ffiString(json)
-        else {
-            return
-        }
-        callback(userData, payloadPtr)
-    }
-
-    func dispose() {
-        guard !disposed else { return }
-        disposed = true
-        if let userData, let dropUserData {
-            dropUserData(userData)
-        }
-    }
-}
+private typealias SessionJsonCallbackBox = AVCJsonCallbackBox
 
 private final class SessionActionQueue {
     let queue: DispatchQueue
@@ -129,9 +92,13 @@ private final class SessionActionQueue {
 private final class SessionControlsDelegateRegistration: NSObject {
     let delegate: SessionControlsDelegateBridge
     let callbackBox: SessionJsonCallbackBox
-    let queue: DispatchQueue
+    let queue: AVCSerialCallbackQueue
 
-    init(delegate: SessionControlsDelegateBridge, callbackBox: SessionJsonCallbackBox, queue: DispatchQueue) {
+    init(
+        delegate: SessionControlsDelegateBridge,
+        callbackBox: SessionJsonCallbackBox,
+        queue: AVCSerialCallbackQueue
+    ) {
         self.delegate = delegate
         self.callbackBox = callbackBox
         self.queue = queue
@@ -142,12 +109,12 @@ private final class SessionControlsDelegateRegistration: NSObject {
 private final class SessionDeferredStartDelegateRegistration: NSObject {
     let delegate: SessionDeferredStartDelegateBridge
     let callbackBox: SessionJsonCallbackBox
-    let queue: DispatchQueue
+    let queue: AVCSerialCallbackQueue
 
     init(
         delegate: SessionDeferredStartDelegateBridge,
         callbackBox: SessionJsonCallbackBox,
-        queue: DispatchQueue
+        queue: AVCSerialCallbackQueue
     ) {
         self.delegate = delegate
         self.callbackBox = callbackBox
@@ -727,6 +694,7 @@ public func av_capture_session_set_controls_delegate_callback(
     _ queueLabelPtr: UnsafePointer<CChar>,
     _ callback: AVCJsonCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
@@ -745,21 +713,28 @@ public func av_capture_session_set_controls_delegate_callback(
         return AVC_SESSION_ERROR
     }
 
-    av_capture_session_clear_controls_delegate_callback(sessionPtr)
-
-    let queue = DispatchQueue(label: String(cString: queueLabelPtr))
+    let queue = AVCSerialCallbackQueue(label: String(cString: queueLabelPtr))
     let callbackBox = SessionJsonCallbackBox(
         callback: callback,
         userData: userData,
+        retainUserData: retainUserData,
         dropUserData: dropUserData
     )
     let delegate = SessionControlsDelegateBridge(callbackBox: callbackBox)
-    session.setControlsDelegate(delegate, queue: queue)
-    avcSetControlsDelegateRegistration(
-        SessionControlsDelegateRegistration(delegate: delegate, callbackBox: callbackBox, queue: queue),
-        for: sessionBox
+    let registration = SessionControlsDelegateRegistration(
+        delegate: delegate,
+        callbackBox: callbackBox,
+        queue: queue
     )
-    return AVC_OK
+    do {
+        try sessionBox.controlsDelegateSlot.acquire(registration)
+        session.setControlsDelegate(delegate, queue: queue.queue)
+        avcSetControlsDelegateRegistration(registration, for: sessionBox)
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_CALLBACK_ERROR)
+    }
 }
 
 @_cdecl("av_capture_session_clear_controls_delegate_callback")
@@ -767,10 +742,17 @@ public func av_capture_session_clear_controls_delegate_callback(_ sessionPtr: Un
     guard #available(macOS 15.0, *) else { return }
     let sessionBox = avcSessionBox(sessionPtr)
     let session = sessionBox.session
+    guard let registration = avcControlsDelegateRegistration(for: sessionBox),
+          sessionBox.controlsDelegateSlot.release(registration)
+    else {
+        return
+    }
     if session.supportsControls {
         session.setControlsDelegate(nil, queue: nil)
     }
     avcSetControlsDelegateRegistration(nil, for: sessionBox)
+    registration.callbackBox.dispose()
+    registration.queue.drain()
 }
 
 @_cdecl("av_capture_session_set_deferred_start_delegate_callback")
@@ -779,6 +761,7 @@ public func av_capture_session_set_deferred_start_delegate_callback(
     _ queueLabelPtr: UnsafePointer<CChar>,
     _ callback: AVCJsonCallback?,
     _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
     _ dropUserData: AVCDropCallback?,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
@@ -799,31 +782,48 @@ public func av_capture_session_set_deferred_start_delegate_callback(
         return AVC_SESSION_ERROR
     }
 
-    av_capture_session_clear_deferred_start_delegate_callback(sessionPtr)
-
-    let queue = DispatchQueue(label: String(cString: queueLabelPtr))
+    let queue = AVCSerialCallbackQueue(label: String(cString: queueLabelPtr))
     let callbackBox = SessionJsonCallbackBox(
         callback: callback,
         userData: userData,
+        retainUserData: retainUserData,
         dropUserData: dropUserData
     )
     let delegate = SessionDeferredStartDelegateBridge(callbackBox: callbackBox)
-    session.setDeferredStartDelegate(delegate, deferredStartDelegateCallbackQueue: queue)
-    avcSetDeferredStartDelegateRegistration(
-        SessionDeferredStartDelegateRegistration(delegate: delegate, callbackBox: callbackBox, queue: queue),
-        for: sessionBox
+    let registration = SessionDeferredStartDelegateRegistration(
+        delegate: delegate,
+        callbackBox: callbackBox,
+        queue: queue
     )
-    return AVC_OK
+    do {
+        try sessionBox.deferredStartDelegateSlot.acquire(registration)
+        session.setDeferredStartDelegate(
+            delegate,
+            deferredStartDelegateCallbackQueue: queue.queue
+        )
+        avcSetDeferredStartDelegateRegistration(registration, for: sessionBox)
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_CALLBACK_ERROR)
+    }
 }
 
 @_cdecl("av_capture_session_clear_deferred_start_delegate_callback")
 public func av_capture_session_clear_deferred_start_delegate_callback(_ sessionPtr: UnsafeMutableRawPointer) {
     guard #available(macOS 26.0, *) else { return }
     let sessionBox = avcSessionBox(sessionPtr)
+    guard let registration = avcDeferredStartDelegateRegistration(for: sessionBox),
+          sessionBox.deferredStartDelegateSlot.release(registration)
+    else {
+        return
+    }
     if avcSessionSupportsDeferredStart(sessionBox.session) {
         sessionBox.session.setDeferredStartDelegate(nil, deferredStartDelegateCallbackQueue: nil)
     }
     avcSetDeferredStartDelegateRegistration(nil, for: sessionBox)
+    registration.callbackBox.dispose()
+    registration.queue.drain()
 }
 
 @_cdecl("av_capture_control_release")

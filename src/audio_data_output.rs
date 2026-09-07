@@ -2,12 +2,12 @@
 
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicUsize, Ordering};
 use std::ffi::CString;
 
 use apple_cf::cm::CMSampleBuffer;
 use serde::{Deserialize, Serialize};
 
+use crate::callback::{ArcContext, SerializedCallback};
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{cstring, optional_json_cstring, parse_json_and_free};
@@ -96,47 +96,14 @@ pub struct AudioDataOutputInfo {
 pub struct AudioPreviewOutputInfo {
     /// The connection count reported by `AVCaptureAudioPreviewOutput`.
     pub connection_count: usize,
+    #[serde(rename = "outputDeviceUniqueID", alias = "outputDeviceUniqueId")]
     /// The output device unique id reported by `AVCaptureAudioPreviewOutput`.
     pub output_device_unique_id: Option<String>,
     /// The volume reported by `AVCaptureAudioPreviewOutput`.
     pub volume: f32,
 }
 
-struct AudioCallbackState {
-    callback: Box<dyn FnMut(CMSampleBuffer) + Send + 'static>,
-    ref_count: AtomicUsize,
-}
-
-impl AudioCallbackState {
-    /// Increment the reference count.
-    ///
-    /// # Safety
-    ///
-    /// `ptr` must point to a valid, live `AudioCallbackState`.
-    unsafe fn retain(ptr: *mut Self) {
-        unsafe { &*ptr }.ref_count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Decrement the reference count, freeing the state if it reaches zero.
-    ///
-    /// # Safety
-    ///
-    /// `ptr` must point to a valid, live `AudioCallbackState`. After this call,
-    /// `ptr` must not be used if the state was freed.
-    unsafe fn release(ptr: *mut Self) {
-        if ptr.is_null() {
-            return;
-        }
-        let prev = unsafe { &*ptr }.ref_count.fetch_sub(1, Ordering::Release);
-        if prev == 1 {
-            // Acquire fence pairs with the Release stores of every other thread
-            // that previously held a reference, so the freeing thread observes
-            // all their writes. This is the canonical Arc-style refcount drop.
-            core::sync::atomic::fence(Ordering::Acquire);
-            drop(unsafe { Box::from_raw(ptr) });
-        }
-    }
-}
+type AudioCallbackState = SerializedCallback<CMSampleBuffer>;
 
 /// Safe wrapper around `AVCaptureAudioDataOutput`.
 #[derive(Debug)]
@@ -181,6 +148,9 @@ impl CaptureOutputRef for AudioPreviewOutput {
         self.ptr
     }
 }
+
+impl crate::output::sealed::Sealed for AudioDataOutput {}
+impl crate::output::sealed::Sealed for AudioPreviewOutput {}
 
 impl AudioDataOutput {
     /// Creates a new `AVCaptureAudioDataOutput` wrapper.
@@ -265,11 +235,8 @@ impl AudioDataOutput {
         let queue_label = CString::new(queue_label).map_err(|error| {
             AVCaptureError::InvalidArgument(format!("queue label contains NUL byte: {error}"))
         })?;
-        let state = Box::new(AudioCallbackState {
-            callback: Box::new(callback),
-            ref_count: AtomicUsize::new(1),
-        });
-        let userdata = Box::into_raw(state).cast::<c_void>();
+        let state = ArcContext::new(AudioCallbackState::new(callback));
+        let userdata = state.as_ptr();
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::audio_data_output::av_capture_audio_output_set_sample_buffer_callback(
@@ -282,11 +249,6 @@ impl AudioDataOutput {
                 &mut err,
             )
         };
-        // On success the Swift callback box took a +1 via `audio_callback_retain`;
-        // drop our creation reference so the state is owned solely by Swift and is
-        // freed only once the box's `deinit` runs (after any in-flight callback).
-        // On error Swift never retained, so this releases the final reference.
-        unsafe { audio_callback_release(userdata) };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
         }
@@ -373,23 +335,22 @@ impl AudioPreviewOutput {
     }
 }
 
+#[allow(unused_unsafe)]
 unsafe extern "C" fn audio_sample_trampoline(userdata: *mut c_void, sample_buffer: *mut c_void) {
     // SAFETY: `userdata` is the `Box<AudioCallbackState>` cast to `*mut c_void`
     // in `set_sample_buffer_handler`. It is non-null and properly aligned for
     // the entire lifetime of this callback registration.
-    let Some(state) = userdata.cast::<AudioCallbackState>().as_mut() else {
+    let Some(state) = ArcContext::<AudioCallbackState>::get(userdata) else {
         return;
     };
     // SAFETY: `sample_buffer` is a `CMSampleBufferRef` at +1 retain passed from
     // the Swift bridge via `Unmanaged.passRetained(...).toOpaque()`.
-    let Some(sample_buffer) = CMSampleBuffer::from_raw(sample_buffer) else {
+    let Some(sample_buffer) = (unsafe { CMSampleBuffer::from_raw(sample_buffer) }) else {
         return;
     };
     // User closures can panic; catch them here so the panic doesn't unwind
     // across the `extern "C"` boundary (which is UB).
-    doom_fish_utils::panic_safe::catch_user_panic("audio_sample_trampoline", || {
-        (state.callback)(sample_buffer);
-    });
+    state.dispatch("audio_sample_trampoline", sample_buffer);
 }
 
 unsafe extern "C" fn audio_callback_retain(userdata: *mut c_void) {
@@ -398,7 +359,7 @@ unsafe extern "C" fn audio_callback_retain(userdata: *mut c_void) {
     }
     // SAFETY: `userdata` is the `Box<AudioCallbackState>` cast to `*mut c_void`
     // in `set_sample_buffer_handler`, kept alive by the Swift callback box.
-    unsafe { AudioCallbackState::retain(userdata.cast::<AudioCallbackState>()) };
+    ArcContext::<AudioCallbackState>::retain(userdata);
 }
 
 unsafe extern "C" fn audio_callback_release(userdata: *mut c_void) {
@@ -408,5 +369,5 @@ unsafe extern "C" fn audio_callback_release(userdata: *mut c_void) {
     // SAFETY: `userdata` was created by `Box::into_raw(Box::new(AudioCallbackState { .. }))`
     // in `set_sample_buffer_handler`. `release` frees the box once the last
     // reference (Rust creation ref + Swift callback box) is dropped.
-    unsafe { AudioCallbackState::release(userdata.cast::<AudioCallbackState>()) };
+    ArcContext::<AudioCallbackState>::release(userdata);
 }

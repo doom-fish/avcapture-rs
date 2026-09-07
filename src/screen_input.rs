@@ -15,6 +15,7 @@ use crate::input::CaptureInputRef;
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCaptureScreenInput` state.
 pub struct ScreenInputInfo {
+    #[serde(rename = "displayID", alias = "displayId")]
     /// The display id reported by `AVCaptureScreenInput`.
     pub display_id: u32,
     #[serde(with = "cm_time_serde")]
@@ -174,3 +175,5 @@ impl CaptureInputRef for ScreenInput {
         self.ptr
     }
 }
+
+impl crate::input::sealed::Sealed for ScreenInput {}

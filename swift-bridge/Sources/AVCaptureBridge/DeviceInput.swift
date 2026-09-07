@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 private struct DeviceInputBridgeInfoPayload: Codable {
-    let deviceUniqueId: String
+    let deviceUniqueID: String
     let deviceLocalizedName: String
     let portsCount: Int
     let multichannelAudioMode: Int32?
@@ -61,7 +61,7 @@ public func av_capture_device_input_info_json(
         windNoiseRemovalEnabled = false
     }
     let payload = DeviceInputBridgeInfoPayload(
-        deviceUniqueId: input.device.uniqueID,
+        deviceUniqueID: input.device.uniqueID,
         deviceLocalizedName: input.device.localizedName,
         portsCount: input.ports.count,
         multichannelAudioMode: multichannelAudioMode,

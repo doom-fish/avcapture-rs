@@ -5,7 +5,11 @@ use avcapture::prelude::*;
 fn main() -> support::ExampleResult {
     let session = CaptureSession::new()?;
     let layer = VideoPreviewLayer::new(&session)?;
+    layer.set_frame(&CaptureRect::new(0.0, 0.0, 640.0, 360.0))?;
+    layer.set_bounds(&CaptureRect::new(0.0, 0.0, 640.0, 360.0))?;
+    layer.set_contents_scale(2.0)?;
     println!("preview layer info: {:?}", layer.info()?);
+    println!("borrowed native CALayer: {:?}", layer.as_native_layer_ptr());
 
     layer.set_video_gravity("resizeAspectFill")?;
     println!("updated video gravity: {}", layer.video_gravity()?);
@@ -14,7 +18,7 @@ fn main() -> support::ExampleResult {
         layer.connection()?.is_some()
     );
 
-    layer.clear_session();
+    layer.clear_session()?;
     println!(
         "preview layer attached after clear: {}",
         layer.session_attached()?

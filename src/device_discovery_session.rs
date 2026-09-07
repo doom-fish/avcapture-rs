@@ -8,7 +8,7 @@ use crate::device::{CaptureDevice, CaptureDeviceType, MediaType};
 use crate::device_position::CaptureDevicePosition;
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
-use crate::helpers::cstring;
+use crate::helpers::json_cstring;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,10 +50,7 @@ impl CaptureDeviceDiscoverySession {
             media_type: media_type.cloned(),
             position,
         };
-        let json = serde_json::to_string(&criteria).map_err(|error| {
-            AVCaptureError::InvalidArgument(format!("failed to encode discovery criteria: {error}"))
-        })?;
-        let json = cstring(&json, "discovery criteria")?;
+        let json = json_cstring(&criteria, "discovery criteria")?;
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
             ffi::device_discovery_session::av_capture_device_discovery_session_create(
@@ -88,5 +85,29 @@ impl CaptureDeviceDiscoverySession {
             devices.push(CaptureDevice { ptr });
         }
         Ok(devices)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DiscoveryCriteria;
+    use crate::device::{CaptureDeviceType, MediaType};
+    use crate::device_position::CaptureDevicePosition;
+    use crate::helpers::json_cstring;
+
+    #[test]
+    fn discovery_criteria_uses_versioned_wire_envelope() {
+        let criteria = DiscoveryCriteria {
+            device_types: vec![CaptureDeviceType::External],
+            media_type: Some(MediaType::Video),
+            position: CaptureDevicePosition::Unspecified,
+        };
+        let json = json_cstring(&criteria, "discovery criteria")
+            .expect("discovery criteria should encode");
+        let value: serde_json::Value =
+            serde_json::from_str(json.to_str().expect("JSON should be UTF-8"))
+                .expect("discovery criteria JSON should parse");
+        assert_eq!(value["schemaVersion"], 1);
+        assert!(value["payload"]["deviceTypes"].is_array());
     }
 }

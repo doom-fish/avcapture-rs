@@ -25,8 +25,8 @@ fn main() {
 
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let swift_triple = match target_arch.as_str() {
-        "x86_64" => "x86_64-apple-macosx",
-        "aarch64" => "arm64-apple-macosx",
+        "x86_64" => "x86_64-apple-macosx12.0",
+        "aarch64" => "arm64-apple-macosx12.0",
         other => panic!("avcapture: unsupported target arch '{other}'"),
     };
 

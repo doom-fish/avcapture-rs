@@ -27,7 +27,7 @@ pub enum CaptureMultichannelAudioMode {
 
 impl CaptureMultichannelAudioMode {
     #[must_use]
-    /// Wraps an existing `AVCaptureMultichannelAudioMode` pointer.
+    /// Decodes an `AVCaptureMultichannelAudioMode` raw value.
     pub const fn from_raw(raw: i32) -> Self {
         match raw {
             0 => Self::None,
@@ -65,6 +65,7 @@ impl From<CaptureMultichannelAudioMode> for i32 {
 #[serde(rename_all = "camelCase")]
 /// Snapshot of `AVCaptureDeviceInput` state.
 pub struct DeviceInputInfo {
+    #[serde(rename = "deviceUniqueID", alias = "deviceUniqueId")]
     /// The device unique id reported by `AVCaptureDeviceInput`.
     pub device_unique_id: String,
     /// The device localized name reported by `AVCaptureDeviceInput`.
@@ -209,3 +210,5 @@ impl CaptureInputRef for DeviceInput {
         self.ptr
     }
 }
+
+impl crate::input::sealed::Sealed for DeviceInput {}

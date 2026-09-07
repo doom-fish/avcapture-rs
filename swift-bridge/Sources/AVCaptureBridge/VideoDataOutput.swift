@@ -6,17 +6,21 @@ import Foundation
 private struct VideoDataOutputInfoSnapshot: Codable {
     let connectionCount: Int
     let alwaysDiscardsLateVideoFrames: Bool
-    let availableVideoCvPixelFormatTypes: [UInt32]
+    let availableVideoCVPixelFormatTypes: [UInt32]
     let callbackInstalled: Bool
     let videoSettings: VideoOutputSettingsPayload?
     let droppedSampleCount: Int
     let lastDroppedSampleReason: String?
 }
 
-private final class VideoSampleCallbackBox {
-    let callback: AVCVideoSampleCallback
-    let userData: UnsafeMutableRawPointer?
-    let releaseUserData: AVCDropCallback?
+private protocol VideoOutputCallbackBox: AnyObject {
+    func emitSample(sampleBuffer: CMSampleBuffer, pixelBuffer: CVPixelBuffer?)
+    func emitDropped(sampleBuffer: CMSampleBuffer, reason: String?, total: UInt64)
+}
+
+private final class VideoSampleCallbackBox: VideoOutputCallbackBox {
+    private let callback: AVCVideoSampleCallback
+    private let contextOwner: AVCCallbackContextOwner
 
     init(
         callback: @escaping AVCVideoSampleCallback,
@@ -25,29 +29,60 @@ private final class VideoSampleCallbackBox {
         releaseUserData: AVCDropCallback?
     ) {
         self.callback = callback
-        self.userData = userData
-        self.releaseUserData = releaseUserData
-        // Take a +1 on the refcounted Rust callback context for the lifetime of
-        // this box. An in-flight sample callback (dispatched on the capture
-        // queue) retains this box for the duration of `emit`, so the matching
-        // release in `deinit` cannot run — and the context cannot be freed —
-        // until that callback completes. This prevents a use-after-free when
-        // `clearCallback` drops the box while a callback is already in flight.
-        if let userData, let retainUserData {
-            retainUserData(userData)
-        }
+        contextOwner = AVCCallbackContextOwner(
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: releaseUserData
+        )
     }
 
-    deinit {
-        if let userData, let releaseUserData {
-            releaseUserData(userData)
-        }
-    }
-
-    func emit(sampleBuffer: CMSampleBuffer, pixelBuffer: CVPixelBuffer?) {
+    func emitSample(sampleBuffer: CMSampleBuffer, pixelBuffer: CVPixelBuffer?) {
+        let contextOwner = self.contextOwner
         let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
         let pixelOpaque = pixelBuffer.map { Unmanaged.passRetained($0).toOpaque() }
-        callback(userData, sampleOpaque, pixelOpaque)
+        callback(contextOwner.userData, sampleOpaque, pixelOpaque)
+    }
+
+    func emitDropped(sampleBuffer: CMSampleBuffer, reason: String?, total: UInt64) {
+    }
+}
+
+private final class VideoDataOutputEventCallbackBox: VideoOutputCallbackBox {
+    private let callback: AVCVideoDataOutputEventCallback
+    private let contextOwner: AVCCallbackContextOwner
+
+    init(
+        callback: @escaping AVCVideoDataOutputEventCallback,
+        userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
+        releaseUserData: AVCDropCallback?
+    ) {
+        self.callback = callback
+        contextOwner = AVCCallbackContextOwner(
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: releaseUserData
+        )
+    }
+
+    func emitSample(sampleBuffer: CMSampleBuffer, pixelBuffer: CVPixelBuffer?) {
+        let contextOwner = self.contextOwner
+        let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
+        let pixelOpaque = pixelBuffer.map { Unmanaged.passRetained($0).toOpaque() }
+        callback(contextOwner.userData, 0, sampleOpaque, pixelOpaque, nil, 0)
+    }
+
+    func emitDropped(sampleBuffer: CMSampleBuffer, reason: String?, total: UInt64) {
+        let contextOwner = self.contextOwner
+        let sampleOpaque = Unmanaged.passRetained(sampleBuffer).toOpaque()
+        callback(
+            contextOwner.userData,
+            1,
+            sampleOpaque,
+            nil,
+            reason.flatMap(ffiString),
+            total
+        )
     }
 }
 
@@ -63,19 +98,35 @@ private final class VideoSampleDelegate: NSObject, AVCaptureVideoDataOutputSampl
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        owner?.noteDroppedReasonIfPresent(sampleBuffer)
-        owner?.callbackBox?.emit(
+        owner?.emitSample(
             sampleBuffer: sampleBuffer,
             pixelBuffer: CMSampleBufferGetImageBuffer(sampleBuffer)
         )
     }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didDrop sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        owner?.emitDropped(sampleBuffer: sampleBuffer)
+    }
 }
 
 final class VideoDataOutputBox: CaptureOutputBoxBase {
+    fileprivate enum CallbackKind {
+        case sample
+        case event
+    }
+
     let videoOutput = AVCaptureVideoDataOutput()
-    fileprivate var callbackBox: VideoSampleCallbackBox?
+    private let callbackLock = NSLock()
+    private let counterLock = NSLock()
+    private let delegateSlot = AVCDelegateSlot("video sample-buffer delegate")
+    private var callbackBox: VideoOutputCallbackBox?
+    private var callbackKind: CallbackKind?
     private var delegate: VideoSampleDelegate?
-    private var callbackQueue: DispatchQueue?
+    private var callbackQueue: AVCSerialCallbackQueue?
     private var droppedSampleCount = 0
     private var lastDroppedSampleReason: String?
 
@@ -88,27 +139,48 @@ final class VideoDataOutputBox: CaptureOutputBoxBase {
     }
 
     fileprivate func infoPayload() -> VideoDataOutputInfoSnapshot {
-        let availableFormats: [UInt32]
-        #if os(macOS)
-        availableFormats = []
-        #else
-        availableFormats = videoOutput.availableVideoCVPixelFormatTypes.map(\.uint32Value)
-        #endif
+        let availableFormats = videoOutput.availableVideoPixelFormatTypes.map { UInt32($0) }
+        counterLock.lock()
+        let droppedSampleCount = self.droppedSampleCount
+        let lastDroppedSampleReason = self.lastDroppedSampleReason
+        counterLock.unlock()
         return VideoDataOutputInfoSnapshot(
             connectionCount: videoOutput.connections.count,
             alwaysDiscardsLateVideoFrames: videoOutput.alwaysDiscardsLateVideoFrames,
-            availableVideoCvPixelFormatTypes: availableFormats,
-            callbackInstalled: callbackBox != nil,
+            availableVideoCVPixelFormatTypes: availableFormats,
+            callbackInstalled: delegateSlot.isOccupied,
             videoSettings: avcEncodeVideoSettings(videoOutput.videoSettings),
             droppedSampleCount: droppedSampleCount,
             lastDroppedSampleReason: lastDroppedSampleReason
         )
     }
 
-    func noteDroppedReasonIfPresent(_ sampleBuffer: CMSampleBuffer) {
-        guard let reason = avcDroppedSampleReason(from: sampleBuffer) else { return }
+    func recordDroppedSample(_ sampleBuffer: CMSampleBuffer) -> (String?, UInt64) {
+        recordDroppedReason(avcDroppedSampleReason(from: sampleBuffer))
+    }
+
+    func recordDroppedReason(_ reason: String?) -> (String?, UInt64) {
+        counterLock.lock()
         droppedSampleCount += 1
         lastDroppedSampleReason = reason
+        let total = UInt64(droppedSampleCount)
+        counterLock.unlock()
+        return (reason, total)
+    }
+
+    fileprivate func emitSample(sampleBuffer: CMSampleBuffer, pixelBuffer: CVPixelBuffer?) {
+        callbackLock.lock()
+        let callbackBox = self.callbackBox
+        callbackLock.unlock()
+        callbackBox?.emitSample(sampleBuffer: sampleBuffer, pixelBuffer: pixelBuffer)
+    }
+
+    fileprivate func emitDropped(sampleBuffer: CMSampleBuffer) {
+        let (reason, total) = recordDroppedSample(sampleBuffer)
+        callbackLock.lock()
+        let callbackBox = self.callbackBox
+        callbackLock.unlock()
+        callbackBox?.emitDropped(sampleBuffer: sampleBuffer, reason: reason, total: total)
     }
 
     func setCallback(
@@ -117,8 +189,7 @@ final class VideoDataOutputBox: CaptureOutputBoxBase {
         retainUserData: AVCRetainCallback?,
         releaseUserData: AVCDropCallback?,
         queueLabel: String
-    ) {
-        clearCallback()
+    ) throws {
         let box = VideoSampleCallbackBox(
             callback: callback,
             userData: userData,
@@ -126,23 +197,87 @@ final class VideoDataOutputBox: CaptureOutputBoxBase {
             releaseUserData: releaseUserData
         )
         let delegate = VideoSampleDelegate(owner: self)
-        let queue = DispatchQueue(label: queueLabel)
-        videoOutput.setSampleBufferDelegate(delegate, queue: queue)
-        callbackBox = box
-        self.delegate = delegate
-        callbackQueue = queue
+        let queue = AVCSerialCallbackQueue(label: queueLabel)
+        try installCallback(box: box, kind: .sample, delegate: delegate, queue: queue)
     }
 
-    func clearCallback() {
-        videoOutput.setSampleBufferDelegate(nil, queue: nil)
-        delegate = nil
-        callbackQueue = nil
-        // Dropping our strong reference here does NOT synchronously free the
-        // Rust context: any in-flight sample callback holds its own strong
-        // reference to the box (via `owner?.callbackBox?.emit`), so the box's
-        // `deinit` — and the matching context release — is deferred until that
-        // callback returns.
-        callbackBox = nil
+    func setEventCallback(
+        callback: @escaping AVCVideoDataOutputEventCallback,
+        userData: UnsafeMutableRawPointer?,
+        retainUserData: AVCRetainCallback?,
+        releaseUserData: AVCDropCallback?,
+        queueLabel: String
+    ) throws {
+        let box = VideoDataOutputEventCallbackBox(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: releaseUserData
+        )
+        let delegate = VideoSampleDelegate(owner: self)
+        let queue = AVCSerialCallbackQueue(label: queueLabel)
+        try installCallback(box: box, kind: .event, delegate: delegate, queue: queue)
+    }
+
+    private func installCallback(
+        box: VideoOutputCallbackBox,
+        kind: CallbackKind,
+        delegate: VideoSampleDelegate,
+        queue: AVCSerialCallbackQueue
+    ) throws {
+        try delegateSlot.acquire(box)
+        videoOutput.setSampleBufferDelegate(delegate, queue: queue.queue)
+        callbackLock.lock()
+        callbackBox = box
+        callbackKind = kind
+        self.delegate = delegate
+        callbackQueue = queue
+        callbackLock.unlock()
+    }
+
+    fileprivate func clearCallback(_ expectedKind: CallbackKind? = nil) {
+        callbackLock.lock()
+        let box = callbackBox
+        let delegate = self.delegate
+        let queue = callbackQueue
+        let kindMatches = expectedKind == nil || callbackKind == expectedKind
+        if kindMatches, let box, delegateSlot.release(box) {
+            callbackBox = nil
+            callbackKind = nil
+            self.delegate = nil
+            callbackQueue = nil
+        }
+        callbackLock.unlock()
+        guard let box, let delegate, !delegateSlot.isOwned(by: box) else {
+            return
+        }
+        if videoOutput.sampleBufferDelegate === delegate {
+            videoOutput.setSampleBufferDelegate(nil, queue: nil)
+        }
+        queue?.drain()
+    }
+
+    func installStreamDelegate(
+        owner: AnyObject,
+        delegate: AVCaptureVideoDataOutputSampleBufferDelegate,
+        queue: AVCSerialCallbackQueue
+    ) throws {
+        try delegateSlot.acquire(owner)
+        videoOutput.setSampleBufferDelegate(delegate, queue: queue.queue)
+    }
+
+    func removeStreamDelegate(
+        owner: AnyObject,
+        delegate: AVCaptureVideoDataOutputSampleBufferDelegate,
+        queue: AVCSerialCallbackQueue
+    ) {
+        guard delegateSlot.release(owner) else {
+            return
+        }
+        if videoOutput.sampleBufferDelegate === delegate {
+            videoOutput.setSampleBufferDelegate(nil, queue: nil)
+        }
+        queue.drain()
     }
 }
 
@@ -217,17 +352,70 @@ public func av_capture_video_output_set_sample_buffer_callback(
     }
     let output = avcUnretained(outputPtr, as: VideoDataOutputBox.self)
     let queueLabel = String(cString: queueLabelPtr)
-    output.setCallback(
-        callback: callback,
-        userData: userData,
-        retainUserData: retainUserData,
-        releaseUserData: dropUserData,
-        queueLabel: queueLabel
-    )
-    return AVC_OK
+    do {
+        try output.setCallback(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: dropUserData,
+            queueLabel: queueLabel
+        )
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_CALLBACK_ERROR)
+    }
 }
 
 @_cdecl("av_capture_video_output_clear_sample_buffer_callback")
 public func av_capture_video_output_clear_sample_buffer_callback(_ outputPtr: UnsafeMutableRawPointer) {
-    avcUnretained(outputPtr, as: VideoDataOutputBox.self).clearCallback()
+    avcUnretained(outputPtr, as: VideoDataOutputBox.self).clearCallback(.sample)
+}
+
+@_cdecl("av_capture_video_output_set_sample_buffer_event_callback")
+public func av_capture_video_output_set_sample_buffer_event_callback(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ queueLabelPtr: UnsafePointer<CChar>,
+    _ callback: AVCVideoDataOutputEventCallback?,
+    _ userData: UnsafeMutableRawPointer?,
+    _ retainUserData: AVCRetainCallback?,
+    _ dropUserData: AVCDropCallback?,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    guard let callback else {
+        outErrorMessage?.pointee = ffiString("missing video data-output event callback")
+        return AVC_CALLBACK_ERROR
+    }
+    let output = avcUnretained(outputPtr, as: VideoDataOutputBox.self)
+    let queueLabel = String(cString: queueLabelPtr)
+    do {
+        try output.setEventCallback(
+            callback: callback,
+            userData: userData,
+            retainUserData: retainUserData,
+            releaseUserData: dropUserData,
+            queueLabel: queueLabel
+        )
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_CALLBACK_ERROR)
+    }
+}
+
+@_cdecl("av_capture_video_output_clear_sample_buffer_event_callback")
+public func av_capture_video_output_clear_sample_buffer_event_callback(
+    _ outputPtr: UnsafeMutableRawPointer
+) {
+    avcUnretained(outputPtr, as: VideoDataOutputBox.self).clearCallback(.event)
+}
+
+@_cdecl("av_capture_video_output_record_drop_for_testing")
+public func av_capture_video_output_record_drop_for_testing(
+    _ outputPtr: UnsafeMutableRawPointer,
+    _ reasonPtr: UnsafePointer<CChar>?
+) -> UInt64 {
+    let reason = reasonPtr.map(String.init(cString:))
+    return avcUnretained(outputPtr, as: VideoDataOutputBox.self)
+        .recordDroppedReason(reason).1
 }

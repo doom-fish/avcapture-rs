@@ -10,6 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::error::AVCaptureError;
 use crate::ffi;
 
+pub(crate) const BRIDGE_SCHEMA_VERSION: u64 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[repr(C)]
@@ -98,7 +100,14 @@ pub fn cstring(value: &str, what: &str) -> Result<CString, AVCaptureError> {
 
 /// Corresponds to `AVCapture.json_cstring`.
 pub fn json_cstring<T: Serialize>(value: &T, what: &str) -> Result<CString, AVCaptureError> {
-    let json = serde_json::to_string(value).map_err(|error| {
+    let payload = serde_json::to_value(value).map_err(|error| {
+        AVCaptureError::InvalidArgument(format!("failed to encode {what}: {error}"))
+    })?;
+    let value = serde_json::json!({
+        "schemaVersion": BRIDGE_SCHEMA_VERSION,
+        "payload": payload,
+    });
+    let json = serde_json::to_string(&value).map_err(|error| {
         AVCaptureError::InvalidArgument(format!("failed to encode {what}: {error}"))
     })?;
     cstring(&json, what)
@@ -116,12 +125,43 @@ pub fn optional_json_cstring<T: Serialize>(
 pub fn parse_json_and_free<T: DeserializeOwned>(
     json_ptr: *mut c_char,
 ) -> Result<T, AVCaptureError> {
+    if json_ptr.is_null() {
+        return Err(AVCaptureError::BridgeProtocol(
+            "bridge returned a null JSON payload".to_owned(),
+        ));
+    }
     let json = unsafe { CStr::from_ptr(json_ptr) }
         .to_string_lossy()
         .into_owned();
     unsafe { ffi::core::avc_string_free(json_ptr) };
-    serde_json::from_str::<T>(&json).map_err(|error| {
-        AVCaptureError::OperationFailed(format!("failed to decode bridge JSON: {error}"))
+    parse_bridge_json(&json)
+}
+
+pub(crate) fn parse_bridge_json<T: DeserializeOwned>(json: &str) -> Result<T, AVCaptureError> {
+    let value = serde_json::from_str::<serde_json::Value>(json).map_err(|error| {
+        AVCaptureError::BridgeProtocol(format!("failed to decode bridge JSON: {error}"))
+    })?;
+    let object = value.as_object().ok_or_else(|| {
+        AVCaptureError::BridgeProtocol("bridge JSON payload is not an envelope object".to_owned())
+    })?;
+    let version = object
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            AVCaptureError::BridgeProtocol(
+                "bridge JSON payload is missing schemaVersion".to_owned(),
+            )
+        })?;
+    if version != BRIDGE_SCHEMA_VERSION {
+        return Err(AVCaptureError::BridgeProtocol(format!(
+            "bridge JSON schema version {version} is unsupported; expected {BRIDGE_SCHEMA_VERSION}"
+        )));
+    }
+    let payload = object.get("payload").cloned().ok_or_else(|| {
+        AVCaptureError::BridgeProtocol("bridge JSON envelope is missing payload".to_owned())
+    })?;
+    serde_json::from_value(payload).map_err(|error| {
+        AVCaptureError::BridgeProtocol(format!("failed to decode bridge JSON: {error}"))
     })
 }
 
@@ -174,5 +214,54 @@ pub mod cm_time_serde {
     {
         let payload = CMTimePayload::deserialize(deserializer)?;
         Ok(payload.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{json_cstring, parse_bridge_json};
+    use crate::AVCaptureError;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+    struct Payload {
+        value: u32,
+    }
+
+    #[test]
+    fn bridge_json_uses_a_versioned_envelope_for_objects_and_arrays() {
+        let object =
+            json_cstring(&Payload { value: 7 }, "payload").expect("object payload should encode");
+        let object = object.to_str().expect("JSON should be UTF-8");
+        assert_eq!(
+            parse_bridge_json::<Payload>(object).expect("object payload should decode"),
+            Payload { value: 7 }
+        );
+
+        let array = json_cstring(&vec![1_u32, 2, 3], "array").expect("array payload should encode");
+        let array = array.to_str().expect("JSON should be UTF-8");
+        assert_eq!(
+            parse_bridge_json::<Vec<u32>>(array).expect("array payload should decode"),
+            vec![1, 2, 3]
+        );
+
+        let scalar = json_cstring(&"figure.wave", "scalar").expect("scalar should encode");
+        assert_eq!(
+            parse_bridge_json::<String>(scalar.to_str().expect("JSON should be UTF-8"))
+                .expect("scalar payload should decode"),
+            "figure.wave"
+        );
+    }
+
+    #[test]
+    fn bridge_json_rejects_missing_or_unknown_schema_versions() {
+        assert!(matches!(
+            parse_bridge_json::<Payload>(r#"{"payload":{"value":7}}"#),
+            Err(AVCaptureError::BridgeProtocol(_))
+        ));
+        assert!(matches!(
+            parse_bridge_json::<Payload>(r#"{"schemaVersion":2,"payload":{"value":7}}"#),
+            Err(AVCaptureError::BridgeProtocol(_))
+        ));
     }
 }
