@@ -24,13 +24,13 @@ fn main() -> support::ExampleResult {
     if !session.can_add_screen_input(&screen_input)
         || !session.can_add_video_data_output(&video_output)
     {
-        session.commit_configuration();
+        session.commit_configuration()?;
         println!("skipping session connections: session cannot add screen input + video output without prompting");
         return Ok(());
     }
     session.add_screen_input(&screen_input)?;
     session.add_video_data_output(&video_output)?;
-    session.commit_configuration();
+    session.commit_configuration()?;
 
     println!("session info: {:?}", session.info()?);
     println!("video output info: {:?}", video_output.output_info()?);

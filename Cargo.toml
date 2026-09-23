@@ -67,6 +67,10 @@ name = "01_smoke_surface"
 name = "14_async_session_streams"
 required-features = ["async"]
 
+[[test]]
+name = "main_thread_session"
+harness = false
+
 [profile.release]
 debug = "full"
 strip = "none"

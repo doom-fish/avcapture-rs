@@ -48,22 +48,90 @@ public func av_capture_session_connection_at_index(
 
 @_cdecl("av_capture_session_begin_configuration")
 public func av_capture_session_begin_configuration(_ sessionPtr: UnsafeMutableRawPointer) {
-    avcSessionBox(sessionPtr).session.beginConfiguration()
+    avcSessionBox(sessionPtr).beginConfiguration()
 }
 
 @_cdecl("av_capture_session_commit_configuration")
-public func av_capture_session_commit_configuration(_ sessionPtr: UnsafeMutableRawPointer) {
-    avcSessionBox(sessionPtr).session.commitConfiguration()
+public func av_capture_session_commit_configuration(
+    _ sessionPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    do {
+        try avcSessionBox(sessionPtr).commitConfiguration()
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_SESSION_ERROR)
+    }
 }
 
 @_cdecl("av_capture_session_start_running")
-public func av_capture_session_start_running(_ sessionPtr: UnsafeMutableRawPointer) {
-    avcSessionBox(sessionPtr).session.startRunning()
+public func av_capture_session_start_running(
+    _ sessionPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    do {
+        try avcSessionBox(sessionPtr).startRunning()
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_SESSION_ERROR)
+    }
 }
 
 @_cdecl("av_capture_session_stop_running")
-public func av_capture_session_stop_running(_ sessionPtr: UnsafeMutableRawPointer) {
-    avcSessionBox(sessionPtr).session.stopRunning()
+public func av_capture_session_stop_running(
+    _ sessionPtr: UnsafeMutableRawPointer,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    do {
+        try avcSessionBox(sessionPtr).stopRunning()
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_SESSION_ERROR)
+    }
+}
+
+func avcSessionGraphProblem(_ session: AVCaptureSession) -> String? {
+    guard #available(macOS 26.0, *) else {
+        return nil
+    }
+    let audioOutputs = session.outputs.compactMap { $0 as? AVCaptureAudioDataOutput }
+    guard !audioOutputs.isEmpty else {
+        return nil
+    }
+    let stereo = kAudioChannelLayoutTag_Stereo
+    let firstOrderAmbisonics = kAudioChannelLayoutTag_HOA_ACN_SN3D | 4
+    for case let input as AVCaptureDeviceInput in session.inputs {
+        let tags = audioOutputs
+            .filter { output in
+                output.connections.contains { connection in
+                    connection.inputPorts.contains { $0.input === input }
+                }
+            }
+            .map(\.spatialAudioChannelLayoutTag)
+        if tags.isEmpty {
+            continue
+        }
+        if input.multichannelAudioMode == .firstOrderAmbisonics {
+            let valid: Bool
+            switch tags.count {
+            case 1:
+                valid = tags[0] == stereo || tags[0] == firstOrderAmbisonics
+            case 2:
+                valid = Set(tags) == [stereo, firstOrderAmbisonics]
+            default:
+                valid = false
+            }
+            if !valid {
+                return "a first-order ambisonics input supports one audio data output producing stereo or four-channel ambisonics, or two outputs producing one of each; \(input.device.localizedName) feeds \(tags.count) audio data output(s) with channel layout tags \(tags)"
+            }
+        } else if tags.contains(where: { $0 != kAudioChannelLayoutTag_Unknown }) {
+            return "audio data outputs fed by an input that is not in first-order ambisonics mode must keep the default channel layout; \(input.device.localizedName) feeds audio data outputs with channel layout tags \(tags)"
+        }
+    }
+    return nil
 }
 
 @_cdecl("av_capture_session_can_set_preset")

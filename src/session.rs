@@ -449,18 +449,41 @@ impl CaptureSession {
     }
 
     /// Corresponds to `AVCaptureSession.commit_configuration`.
-    pub fn commit_configuration(&self) {
-        unsafe { ffi::session::av_capture_session_commit_configuration(self.ptr) };
+    pub fn commit_configuration(&self) -> Result<(), AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let status = unsafe {
+            ffi::session::av_capture_session_commit_configuration(self.ptr, &raw mut err)
+        };
+        if status != ffi::status::OK {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(())
     }
 
-    /// Corresponds to `AVCaptureSession.start_running`.
-    pub fn start_running(&self) {
-        unsafe { ffi::session::av_capture_session_start_running(self.ptr) };
+    /// Corresponds to `AVCaptureSession.start_running`. Off the main thread this blocks until
+    /// the session has started; on the main thread the start is scheduled on the session's
+    /// serial queue and this returns at once, so watch `is_running` for the outcome.
+    pub fn start_running(&self) -> Result<(), AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let status =
+            unsafe { ffi::session::av_capture_session_start_running(self.ptr, &raw mut err) };
+        if status != ffi::status::OK {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(())
     }
 
-    /// Corresponds to `AVCaptureSession.stop_running`.
-    pub fn stop_running(&self) {
-        unsafe { ffi::session::av_capture_session_stop_running(self.ptr) };
+    /// Corresponds to `AVCaptureSession.stop_running`. Off the main thread this blocks until
+    /// the session has stopped; on the main thread the stop is scheduled on the session's
+    /// serial queue and this returns at once.
+    pub fn stop_running(&self) -> Result<(), AVCaptureError> {
+        let mut err: *mut c_char = ptr::null_mut();
+        let status =
+            unsafe { ffi::session::av_capture_session_stop_running(self.ptr, &raw mut err) };
+        if status != ffi::status::OK {
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(())
     }
 
     /// Returns whether `AVCaptureSession` can set session preset.

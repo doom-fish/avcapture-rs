@@ -288,6 +288,86 @@ final class SessionBox: NSObject {
     let session = AVCaptureSession()
     let controlsDelegateSlot = AVCDelegateSlot("session controls delegate")
     let deferredStartDelegateSlot = AVCDelegateSlot("session deferred-start delegate")
+    private let transitionQueue = AVCSerialCallbackQueue(label: "avcapture.session")
+    private let stateLock = NSLock()
+    private var configurationDepth = 0
+
+    var isConfiguring: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return configurationDepth > 0
+    }
+
+    func beginConfiguration() {
+        transitionQueue.drain()
+        stateLock.lock()
+        configurationDepth += 1
+        stateLock.unlock()
+        session.beginConfiguration()
+    }
+
+    func commitConfiguration() throws {
+        transitionQueue.drain()
+        stateLock.lock()
+        let depth = configurationDepth
+        stateLock.unlock()
+        guard depth > 0 else {
+            throw BridgeError.status(
+                AVC_INVALID_STATE,
+                "commitConfiguration was called without a matching beginConfiguration"
+            )
+        }
+        if depth == 1, let problem = avcSessionGraphProblem(session) {
+            throw BridgeError.status(AVC_INVALID_ARGUMENT, problem)
+        }
+        session.commitConfiguration()
+        stateLock.lock()
+        configurationDepth -= 1
+        stateLock.unlock()
+    }
+
+    func startRunning() throws {
+        guard !isConfiguring else {
+            throw BridgeError.status(
+                AVC_INVALID_STATE,
+                "startRunning cannot be called between beginConfiguration and commitConfiguration"
+            )
+        }
+        if let problem = avcSessionGraphProblem(session) {
+            throw BridgeError.status(AVC_INVALID_ARGUMENT, problem)
+        }
+        guard Thread.isMainThread else {
+            transitionQueue.drain()
+            session.startRunning()
+            return
+        }
+        transitionQueue.queue.async { [self] in
+            guard !isConfiguring, avcSessionGraphProblem(session) == nil else {
+                return
+            }
+            session.startRunning()
+        }
+    }
+
+    func stopRunning() throws {
+        guard !isConfiguring else {
+            throw BridgeError.status(
+                AVC_INVALID_STATE,
+                "stopRunning cannot be called between beginConfiguration and commitConfiguration"
+            )
+        }
+        guard Thread.isMainThread else {
+            transitionQueue.drain()
+            session.stopRunning()
+            return
+        }
+        transitionQueue.queue.async { [self] in
+            guard !isConfiguring else {
+                return
+            }
+            session.stopRunning()
+        }
+    }
 }
 
 final class DeviceBox: NSObject {

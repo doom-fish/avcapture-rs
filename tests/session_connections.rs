@@ -18,7 +18,7 @@ fn session_connections_smoke() -> common::TestResult {
     if !session.can_add_screen_input(&screen_input)
         || !session.can_add_video_data_output(&video_output)
     {
-        session.commit_configuration();
+        session.commit_configuration()?;
         common::skip(
             "session connections",
             "session cannot add screen input + video output",
@@ -27,7 +27,7 @@ fn session_connections_smoke() -> common::TestResult {
     }
     session.add_screen_input(&screen_input)?;
     session.add_video_data_output(&video_output)?;
-    session.commit_configuration();
+    session.commit_configuration()?;
 
     let info = session.info()?;
     let connections = session.connections()?;

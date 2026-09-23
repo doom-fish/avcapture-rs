@@ -135,7 +135,7 @@ fn main() -> support::ExampleResult {
         Err(err) => support::print_skip("screen input", err),
     }
 
-    session.commit_configuration();
+    session.commit_configuration()?;
 
     println!("session info: {:?}", session.info()?);
     println!("session connections: {}", session.connection_count()?);

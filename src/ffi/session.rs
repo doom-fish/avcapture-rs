@@ -22,9 +22,18 @@ extern "C" {
         out_error_message: *mut *mut c_char,
     ) -> *mut c_void;
     pub fn av_capture_session_begin_configuration(session: *mut c_void);
-    pub fn av_capture_session_commit_configuration(session: *mut c_void);
-    pub fn av_capture_session_start_running(session: *mut c_void);
-    pub fn av_capture_session_stop_running(session: *mut c_void);
+    pub fn av_capture_session_commit_configuration(
+        session: *mut c_void,
+        out_error_message: *mut *mut c_char,
+    ) -> i32;
+    pub fn av_capture_session_start_running(
+        session: *mut c_void,
+        out_error_message: *mut *mut c_char,
+    ) -> i32;
+    pub fn av_capture_session_stop_running(
+        session: *mut c_void,
+        out_error_message: *mut *mut c_char,
+    ) -> i32;
     pub fn av_capture_session_can_set_preset(session: *mut c_void, preset: *const c_char) -> bool;
     pub fn av_capture_session_set_preset(
         session: *mut c_void,
