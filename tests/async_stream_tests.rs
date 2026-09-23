@@ -847,7 +847,11 @@ mod async_stream {
         };
         assert!(!audio.is_null(), "{}", unsafe { take_error(error) });
 
-        let valid_path = b"/tmp/avcapture-owned-recording-validation.mov";
+        let valid_path = std::env::current_dir()?
+            .join("target")
+            .join("test-artifacts")
+            .join("owned-recording-validation.mov");
+        let valid_path = valid_path.as_os_str().as_encoded_bytes();
         let empty_path = [0_u8];
         let output_type = std::ffi::CString::new("public.caf")?;
         assert_movie_failure(movie, valid_path, valid_path.len(), 99);

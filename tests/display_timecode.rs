@@ -1,6 +1,7 @@
 use std::process::Command;
 
 #[test]
+#[ignore = "runs example 13, which uses the camera and creates an external display configurator that can reconfigure an attached external display"]
 fn display_and_timecode_example_smoke() -> Result<(), Box<dyn std::error::Error>> {
     let output = Command::new("cargo")
         .args(["run", "--example", "13_display_timecode", "--quiet"])
