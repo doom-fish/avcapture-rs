@@ -18,6 +18,7 @@ let AVC_MAIN_THREAD_REQUIRED: Int32 = -10
 let AVC_OUTPUT_FILE_EXISTS: Int32 = -11
 let AVC_CANCELLED: Int32 = -12
 let AVC_BRIDGE_PROTOCOL: Int32 = -13
+let AVC_INVALID_STATE: Int32 = -14
 let AVC_BRIDGE_SCHEMA_VERSION: UInt64 = 1
 let AVC_STREAM_BRIDGE_ERROR_KIND: Int32 = -1
 
@@ -271,6 +272,16 @@ enum BridgeError: LocalizedError {
 
 func avcStatus(for error: Error, default defaultStatus: Int32) -> Int32 {
     (error as? BridgeError)?.statusCode ?? defaultStatus
+}
+
+func avcCaughtExceptionError(_ error: NSError?, _ operation: String) -> BridgeError {
+    guard let error else {
+        return .status(AVC_OPERATION_FAILED, "\(operation) raised an Objective-C exception")
+    }
+    let status = error.domain == NSExceptionName.genericException.rawValue
+        ? AVC_INVALID_STATE
+        : AVC_INVALID_ARGUMENT
+    return .status(status, "\(operation) raised \(error.domain): \(error.localizedDescription)")
 }
 
 final class SessionBox: NSObject {

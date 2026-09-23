@@ -1,3 +1,4 @@
+import AVCaptureObjCBridge
 import AVFoundation
 import Foundation
 
@@ -604,6 +605,48 @@ public func av_capture_device_unlock_for_configuration(_ devicePtr: UnsafeMutabl
     avcDeviceBox(devicePtr).device.unlockForConfiguration()
 }
 
+private func avcFrameDurationProblem(_ device: AVCaptureDevice, _ duration: CMTime) -> String? {
+    guard duration.isValid else {
+        return nil
+    }
+    guard duration.isNumeric, duration.timescale > 0 else {
+        return "a frame duration must be kCMTimeInvalid or a finite time with a positive timescale"
+    }
+    if #available(macOS 15.0, *), device.isAutoVideoFrameRateEnabled {
+        return "frame durations cannot be set while auto video frame rate is enabled"
+    }
+    let ranges = device.activeFormat.videoSupportedFrameRateRanges
+    let supported = ranges.contains { range in
+        CMTimeCompare(duration, range.minFrameDuration) >= 0
+            && CMTimeCompare(duration, range.maxFrameDuration) <= 0
+    }
+    guard supported else {
+        return "frame duration \(duration.value)/\(duration.timescale) s is outside every supported frame rate range of the active format"
+    }
+    return nil
+}
+
+private func avcSetFrameDuration(
+    _ devicePtr: UnsafeMutableRawPointer,
+    _ duration: CMTime,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+    operation: String,
+    apply: (AVCaptureDevice, CMTime, NSErrorPointer) -> Bool
+) -> Int32 {
+    let device = avcDeviceBox(devicePtr).device
+    if let problem = avcFrameDurationProblem(device, duration) {
+        outErrorMessage?.pointee = ffiString(problem)
+        return AVC_INVALID_ARGUMENT
+    }
+    var error: NSError?
+    guard apply(device, duration, &error) else {
+        let failure = avcCaughtExceptionError(error, operation)
+        outErrorMessage?.pointee = ffiString(failure.localizedDescription)
+        return failure.statusCode ?? AVC_INVALID_ARGUMENT
+    }
+    return AVC_OK
+}
+
 @_cdecl("av_capture_device_set_active_format")
 public func av_capture_device_set_active_format(
     _ devicePtr: UnsafeMutableRawPointer,
@@ -612,7 +655,18 @@ public func av_capture_device_set_active_format(
 ) -> Int32 {
     let device = avcDeviceBox(devicePtr).device
     let format = avcDeviceFormatBox(formatPtr).format
-    device.activeFormat = format
+    guard device.formats.contains(format) else {
+        outErrorMessage?.pointee = ffiString(
+            "the format is not one of \(device.localizedName)'s formats; pick one from this device's formats()"
+        )
+        return AVC_INVALID_ARGUMENT
+    }
+    var error: NSError?
+    guard AVCTrySetActiveFormat(device, format, &error) else {
+        let failure = avcCaughtExceptionError(error, "setActiveFormat")
+        outErrorMessage?.pointee = ffiString(failure.localizedDescription)
+        return failure.statusCode ?? AVC_INVALID_ARGUMENT
+    }
     return AVC_OK
 }
 
@@ -622,9 +676,13 @@ public func av_capture_device_set_active_video_min_frame_duration(
     _ duration: CMTime,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
-    let device = avcDeviceBox(devicePtr).device
-    device.activeVideoMinFrameDuration = duration
-    return AVC_OK
+    avcSetFrameDuration(
+        devicePtr,
+        duration,
+        outErrorMessage,
+        operation: "setActiveVideoMinFrameDuration",
+        apply: AVCTrySetActiveVideoMinFrameDuration
+    )
 }
 
 @_cdecl("av_capture_device_set_active_video_max_frame_duration")
@@ -633,9 +691,13 @@ public func av_capture_device_set_active_video_max_frame_duration(
     _ duration: CMTime,
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
-    let device = avcDeviceBox(devicePtr).device
-    device.activeVideoMaxFrameDuration = duration
-    return AVC_OK
+    avcSetFrameDuration(
+        devicePtr,
+        duration,
+        outErrorMessage,
+        operation: "setActiveVideoMaxFrameDuration",
+        apply: AVCTrySetActiveVideoMaxFrameDuration
+    )
 }
 
 @_cdecl("av_capture_device_set_exposure_mode")
@@ -733,6 +795,16 @@ public func av_capture_device_set_torch_level(
         outErrorMessage?.pointee = ffiString("torch level requires macOS 10.15 or newer")
         return AVC_OPERATION_FAILED
     }
+    guard level.isFinite, (level > 0 && level <= 1) || level == AVCaptureDevice.maxAvailableTorchLevel else {
+        outErrorMessage?.pointee = ffiString(
+            "torch level must be greater than 0 and at most 1, or the maximum available torch level"
+        )
+        return AVC_INVALID_ARGUMENT
+    }
+    guard device.isTorchModeSupported(.on) else {
+        outErrorMessage?.pointee = ffiString("device does not support torch mode on")
+        return AVC_DEVICE_ERROR
+    }
     do {
         try device.setTorchModeOn(level: level)
         return AVC_OK
@@ -751,6 +823,12 @@ public func av_capture_device_set_active_color_space(
     let device = avcDeviceBox(devicePtr).device
     guard let colorSpace = avcDecodeColorSpace(colorSpaceRaw) else {
         outErrorMessage?.pointee = ffiString("unsupported color space: \(colorSpaceRaw)")
+        return AVC_INVALID_ARGUMENT
+    }
+    guard device.activeFormat.supportedColorSpaces.contains(colorSpace) else {
+        outErrorMessage?.pointee = ffiString(
+            "color space \(colorSpaceRaw) is not supported by the active format of \(device.localizedName)"
+        )
         return AVC_INVALID_ARGUMENT
     }
     device.activeColorSpace = colorSpace
@@ -795,8 +873,10 @@ public func av_capture_device_set_active_input_source(
     _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 ) -> Int32 {
     let device = avcDeviceBox(devicePtr).device
-    let inputSource = avcDeviceInputSourceBox(inputSourcePtr).inputSource
-    guard device.inputSources.contains(where: { $0.inputSourceID == inputSource.inputSourceID }) else {
+    let requested = avcDeviceInputSourceBox(inputSourcePtr).inputSource
+    guard let inputSource = device.inputSources.first(where: { $0 == requested })
+        ?? device.inputSources.first(where: { $0.inputSourceID == requested.inputSourceID })
+    else {
         outErrorMessage?.pointee = ffiString("input source does not belong to device")
         return AVC_INVALID_ARGUMENT
     }
@@ -1141,7 +1221,7 @@ public func av_capture_device_set_camera_lens_smudge_detection(
         outErrorMessage?.pointee = ffiString("camera lens smudge detection is not supported by this device")
         return AVC_OPERATION_FAILED
     }
-    if enabled && !device.activeFormat.isCameraLensSmudgeDetectionSupported {
+    guard device.activeFormat.isCameraLensSmudgeDetectionSupported else {
         outErrorMessage?.pointee = ffiString("camera lens smudge detection is not supported by the active format")
         return AVC_DEVICE_ERROR
     }

@@ -39,6 +39,7 @@ pub enum AVCaptureError {
     BridgeProtocol(String),
     /// A generic operation on an existing object failed.
     OperationFailed(String),
+    InvalidState(String),
 }
 
 impl fmt::Display for AVCaptureError {
@@ -59,6 +60,7 @@ impl fmt::Display for AVCaptureError {
             Self::Cancelled(message) => write!(f, "capture operation cancelled: {message}"),
             Self::BridgeProtocol(message) => write!(f, "capture bridge protocol error: {message}"),
             Self::OperationFailed(message) => write!(f, "operation failed: {message}"),
+            Self::InvalidState(message) => write!(f, "invalid state: {message}"),
         }
     }
 }
@@ -133,6 +135,7 @@ pub unsafe fn from_swift(status: i32, error_str: *mut core::ffi::c_char) -> AVCa
         ffi::status::CANCELLED => AVCaptureError::Cancelled(message),
         ffi::status::BRIDGE_PROTOCOL => AVCaptureError::BridgeProtocol(message),
         ffi::status::OPERATION_FAILED => AVCaptureError::OperationFailed(message),
+        ffi::status::INVALID_STATE => AVCaptureError::InvalidState(message),
         _ => AVCaptureError::OperationFailed(format!("unknown status {status}: {message}")),
     }
 }
@@ -196,6 +199,10 @@ mod tests {
             AVCaptureError::OperationFailed("bridge failed".to_owned()).to_string(),
             "operation failed: bridge failed"
         );
+        assert_eq!(
+            AVCaptureError::InvalidState("configuring".to_owned()).to_string(),
+            "invalid state: configuring"
+        );
     }
 
     #[test]
@@ -252,6 +259,10 @@ mod tests {
             (
                 ffi::status::OPERATION_FAILED,
                 AVCaptureError::OperationFailed(String::new()),
+            ),
+            (
+                ffi::status::INVALID_STATE,
+                AVCaptureError::InvalidState(String::new()),
             ),
         ];
 

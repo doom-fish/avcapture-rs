@@ -952,6 +952,17 @@ public func av_capture_movie_file_output_set_spatial_video_capture_enabled(
         outErrorMessage?.pointee = ffiString("spatial video capture is not supported for the current session configuration")
         return AVC_OUTPUT_ERROR
     }
+    if #available(macOS 26.0, *), enabled {
+        let sourceDevices = movieOutput.connections
+            .flatMap(\.inputPorts)
+            .compactMap { ($0.input as? AVCaptureDeviceInput)?.device }
+        if sourceDevices.contains(where: { $0.isVideoFrameDurationLocked || $0.isFollowingExternalSyncDevice }) {
+            outErrorMessage?.pointee = ffiString(
+                "spatial video capture cannot be enabled while a source device has a locked frame duration or follows an external sync device"
+            )
+            return AVC_INVALID_ARGUMENT
+        }
+    }
     movieOutput.isSpatialVideoCaptureEnabled = enabled
     return AVC_OK
 }

@@ -69,4 +69,5 @@ pub mod status {
     pub const OUTPUT_FILE_EXISTS: i32 = -11;
     pub const CANCELLED: i32 = -12;
     pub const BRIDGE_PROTOCOL: i32 = -13;
+    pub const INVALID_STATE: i32 = -14;
 }

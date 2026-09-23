@@ -8,7 +8,7 @@ use std::ffi::CString;
 use apple_cf::cm::CMTime;
 use serde::{Deserialize, Serialize};
 
-use crate::device_format::CaptureDeviceFormat;
+use crate::device_format::{CaptureDeviceFormat, FrameRateRange};
 use crate::device_position::CaptureDevicePosition;
 use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
@@ -1522,6 +1522,7 @@ impl CaptureDeviceConfigurationLock<'_> {
         &self,
         duration: CMTime,
     ) -> Result<(), AVCaptureError> {
+        self.validate_frame_duration(duration)?;
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::device::av_capture_device_set_active_video_min_frame_duration(
@@ -1541,6 +1542,7 @@ impl CaptureDeviceConfigurationLock<'_> {
         &self,
         duration: CMTime,
     ) -> Result<(), AVCaptureError> {
+        self.validate_frame_duration(duration)?;
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::device::av_capture_device_set_active_video_max_frame_duration(
@@ -1627,11 +1629,7 @@ impl CaptureDeviceConfigurationLock<'_> {
 
     /// Sets the torch level on `AVCaptureDeviceConfigurationLock`.
     pub fn set_torch_level(&self, level: f32) -> Result<(), AVCaptureError> {
-        if !level.is_finite() {
-            return Err(AVCaptureError::InvalidArgument(
-                "torch level must be finite".to_owned(),
-            ));
-        }
+        validate_torch_level(level)?;
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::device::av_capture_device_set_torch_level(self.device.ptr, level, &raw mut err)
@@ -1647,11 +1645,13 @@ impl CaptureDeviceConfigurationLock<'_> {
         &self,
         color_space: impl Into<CaptureColorSpace>,
     ) -> Result<(), AVCaptureError> {
+        let color_space = color_space.into();
+        validate_color_space(color_space, &self.device.supported_color_spaces()?)?;
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::device::av_capture_device_set_active_color_space(
                 self.device.ptr,
-                color_space.into().as_raw(),
+                color_space.as_raw(),
                 &raw mut err,
             )
         };
@@ -1801,10 +1801,71 @@ impl CaptureDeviceConfigurationLock<'_> {
     }
 }
 
+impl CaptureDeviceConfigurationLock<'_> {
+    fn validate_frame_duration(&self, duration: CMTime) -> Result<(), AVCaptureError> {
+        match self.device.active_format()? {
+            Some(format) => {
+                validate_frame_duration(duration, &format.video_supported_frame_rate_ranges()?)
+            }
+            None => Ok(()),
+        }
+    }
+}
+
 impl Drop for CaptureDeviceConfigurationLock<'_> {
     fn drop(&mut self) {
         unsafe { ffi::device::av_capture_device_unlock_for_configuration(self.device.ptr) };
     }
+}
+
+fn validate_frame_duration(
+    duration: CMTime,
+    ranges: &[FrameRateRange],
+) -> Result<(), AVCaptureError> {
+    if !duration.is_valid() {
+        return Ok(());
+    }
+    if !duration.is_numeric() || duration.timescale <= 0 {
+        return Err(AVCaptureError::InvalidArgument(
+            "a frame duration must be CMTime::INVALID or a finite time with a positive timescale"
+                .to_owned(),
+        ));
+    }
+    let supported = ranges.iter().any(|range| {
+        duration.compare(range.min_frame_duration).is_ge()
+            && duration.compare(range.max_frame_duration).is_le()
+    });
+    if supported {
+        return Ok(());
+    }
+    Err(AVCaptureError::InvalidArgument(format!(
+        "frame duration {}/{} s is outside every supported frame rate range of the active format",
+        duration.value, duration.timescale
+    )))
+}
+
+fn validate_torch_level(level: f32) -> Result<(), AVCaptureError> {
+    #[allow(clippy::float_cmp)]
+    let is_maximum = level == f32::MAX;
+    if level.is_finite() && ((level > 0.0 && level <= 1.0) || is_maximum) {
+        return Ok(());
+    }
+    Err(AVCaptureError::InvalidArgument(
+        "torch level must be greater than 0 and at most 1, or CaptureDevice::max_available_torch_level()"
+            .to_owned(),
+    ))
+}
+
+fn validate_color_space(
+    color_space: CaptureColorSpace,
+    supported: &[CaptureColorSpace],
+) -> Result<(), AVCaptureError> {
+    if supported.contains(&color_space) {
+        return Ok(());
+    }
+    Err(AVCaptureError::InvalidArgument(format!(
+        "color space {color_space:?} is not supported by the active format (supported: {supported:?})"
+    )))
 }
 
 fn preset_cstring(preset: &CaptureSessionPreset) -> Result<CString, AVCaptureError> {
@@ -1846,11 +1907,183 @@ fn validate_normalized_point(point: (f64, f64)) -> Result<(f64, f64), AVCaptureE
 #[cfg(test)]
 mod tests {
     use super::{
-        option_bool_from_raw, validate_normalized_point, CaptureCameraLensSmudgeDetectionStatus,
+        option_bool_from_raw, validate_color_space, validate_frame_duration,
+        validate_normalized_point, validate_torch_level, AuthorizationStatus,
+        CaptureCameraLensSmudgeDetectionStatus, CaptureColorSpace, CaptureDevice,
         CaptureDeviceType, CaptureExposureMode, CaptureFocusMode, CaptureMicrophoneMode,
         CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions, MediaType,
     };
-    use crate::error::AVCaptureError;
+    use crate::device_format::FrameRateRange;
+    use crate::error::{from_swift, AVCaptureError};
+    use crate::ffi;
+    use apple_cf::cm::CMTime;
+    use core::ffi::{c_char, c_void};
+    use core::ptr;
+
+    fn frame_rate_range(min_rate: i32, max_rate: i32) -> FrameRateRange {
+        FrameRateRange {
+            min_frame_rate: f64::from(min_rate),
+            max_frame_rate: f64::from(max_rate),
+            min_frame_duration: CMTime::new(1, max_rate),
+            max_frame_duration: CMTime::new(1, min_rate),
+        }
+    }
+
+    const fn is_invalid_argument<T>(result: &Result<T, AVCaptureError>) -> bool {
+        matches!(result, Err(AVCaptureError::InvalidArgument(_)))
+    }
+
+    #[test]
+    fn frame_duration_inside_a_supported_range_is_accepted() {
+        let ranges = [frame_rate_range(1, 30)];
+
+        assert!(validate_frame_duration(CMTime::new(1, 30), &ranges).is_ok());
+        assert!(validate_frame_duration(CMTime::new(1, 1), &ranges).is_ok());
+        assert!(validate_frame_duration(CMTime::new(1, 24), &ranges).is_ok());
+        assert!(validate_frame_duration(CMTime::new(1000, 30_000), &ranges).is_ok());
+    }
+
+    #[test]
+    fn frame_duration_outside_every_range_is_rejected() {
+        let ranges = [frame_rate_range(15, 30)];
+
+        assert!(is_invalid_argument(&validate_frame_duration(
+            CMTime::new(1, 60),
+            &ranges
+        )));
+        assert!(is_invalid_argument(&validate_frame_duration(
+            CMTime::new(1, 10),
+            &ranges
+        )));
+        assert!(is_invalid_argument(&validate_frame_duration(
+            CMTime::new(0, 1),
+            &ranges
+        )));
+        assert!(is_invalid_argument(&validate_frame_duration(
+            CMTime::new(-1, 30),
+            &ranges
+        )));
+    }
+
+    #[test]
+    fn frame_duration_may_fall_into_any_of_several_ranges() {
+        let ranges = [frame_rate_range(24, 30), frame_rate_range(50, 60)];
+
+        assert!(validate_frame_duration(CMTime::new(1, 60), &ranges).is_ok());
+        assert!(validate_frame_duration(CMTime::new(1, 25), &ranges).is_ok());
+        assert!(is_invalid_argument(&validate_frame_duration(
+            CMTime::new(1, 40),
+            &ranges
+        )));
+    }
+
+    #[test]
+    fn invalid_frame_duration_resets_to_the_default() {
+        assert!(validate_frame_duration(CMTime::INVALID, &[]).is_ok());
+        assert!(validate_frame_duration(CMTime::INVALID, &[frame_rate_range(1, 30)]).is_ok());
+    }
+
+    #[test]
+    fn non_numeric_frame_durations_are_rejected() {
+        let ranges = [frame_rate_range(1, 30)];
+
+        for duration in [
+            CMTime::indefinite(),
+            CMTime::positive_infinity(),
+            CMTime::negative_infinity(),
+            CMTime {
+                value: 1,
+                timescale: 0,
+                flags: 1,
+                epoch: 0,
+            },
+        ] {
+            assert!(
+                is_invalid_argument(&validate_frame_duration(duration, &ranges)),
+                "{duration:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn frame_durations_need_a_supported_range() {
+        assert!(is_invalid_argument(&validate_frame_duration(
+            CMTime::new(1, 30),
+            &[]
+        )));
+    }
+
+    #[test]
+    fn torch_level_must_be_in_the_documented_range() {
+        for level in [0.001, 0.5, 1.0, f32::MAX] {
+            assert!(
+                validate_torch_level(level).is_ok(),
+                "{level} must be accepted"
+            );
+        }
+        for level in [
+            0.0,
+            -0.5,
+            1.000_1,
+            2.0,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            assert!(
+                is_invalid_argument(&validate_torch_level(level)),
+                "{level} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn color_space_must_be_supported_by_the_active_format() {
+        let supported = [CaptureColorSpace::Srgb];
+
+        assert!(validate_color_space(CaptureColorSpace::Srgb, &supported).is_ok());
+        assert!(is_invalid_argument(&validate_color_space(
+            CaptureColorSpace::P3D65,
+            &supported
+        )));
+        assert!(is_invalid_argument(&validate_color_space(
+            CaptureColorSpace::Srgb,
+            &[]
+        )));
+    }
+
+    #[test]
+    fn bridge_rejects_unsupported_frame_durations_without_raising() {
+        if !matches!(
+            CaptureDevice::authorization_status(&MediaType::Video),
+            Ok(AuthorizationStatus::Authorized)
+        ) {
+            eprintln!("skipping bridge frame duration check: camera access is not authorized");
+            return;
+        }
+        let Ok(Some(device)) = CaptureDevice::default(&MediaType::Video) else {
+            eprintln!("skipping bridge frame duration check: no camera");
+            return;
+        };
+        let Ok(lock) = device.lock_for_configuration() else {
+            eprintln!("skipping bridge frame duration check: the camera could not be locked");
+            return;
+        };
+        let setters: [unsafe extern "C" fn(*mut c_void, CMTime, *mut *mut c_char) -> i32; 2] = [
+            ffi::device::av_capture_device_set_active_video_min_frame_duration,
+            ffi::device::av_capture_device_set_active_video_max_frame_duration,
+        ];
+        for setter in setters {
+            let mut err: *mut c_char = ptr::null_mut();
+            let status =
+                unsafe { setter(lock.device.ptr, CMTime::new(1, 1_000_000), &raw mut err) };
+            let error = unsafe { from_swift(status, err) };
+            assert!(
+                matches!(error, AVCaptureError::InvalidArgument(_)),
+                "unexpected {error:?}"
+            );
+        }
+    }
 
     #[test]
     fn media_type_round_trips_known_and_unknown_values() {
