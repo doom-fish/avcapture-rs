@@ -40,6 +40,7 @@ pub enum AVCaptureError {
     /// A generic operation on an existing object failed.
     OperationFailed(String),
     InvalidState(String),
+    Timeout(String),
 }
 
 impl fmt::Display for AVCaptureError {
@@ -61,6 +62,7 @@ impl fmt::Display for AVCaptureError {
             Self::BridgeProtocol(message) => write!(f, "capture bridge protocol error: {message}"),
             Self::OperationFailed(message) => write!(f, "operation failed: {message}"),
             Self::InvalidState(message) => write!(f, "invalid state: {message}"),
+            Self::Timeout(message) => write!(f, "timed out: {message}"),
         }
     }
 }
@@ -202,6 +204,10 @@ mod tests {
         assert_eq!(
             AVCaptureError::InvalidState("configuring".to_owned()).to_string(),
             "invalid state: configuring"
+        );
+        assert_eq!(
+            AVCaptureError::Timeout("access request".to_owned()).to_string(),
+            "timed out: access request"
         );
     }
 

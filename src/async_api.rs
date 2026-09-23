@@ -381,6 +381,27 @@ impl Future for PhotoCaptureResultFuture {
 }
 
 #[derive(Debug)]
+pub struct RequestAccessFuture {
+    request: crate::device::AccessRequest,
+}
+
+impl RequestAccessFuture {
+    pub fn start(media_type: &crate::MediaType) -> Result<Self, AVCaptureError> {
+        Ok(Self {
+            request: crate::device::AccessRequest::start(media_type)?,
+        })
+    }
+}
+
+impl Future for RequestAccessFuture {
+    type Output = bool;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.request.poll_decision(cx)
+    }
+}
+
+#[derive(Debug)]
 struct StreamHandle {
     ptr: *mut c_void,
     drop_fn: unsafe fn(*mut c_void),

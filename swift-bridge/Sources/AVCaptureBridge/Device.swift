@@ -392,6 +392,50 @@ public func av_capture_authorization_status(
     return Int32(AVCaptureDevice.authorizationStatus(for: mediaType).rawValue)
 }
 
+public typealias AVCAccessRequestCallback = @convention(c) (UnsafeMutableRawPointer?, Bool) -> Void
+
+private final class AVCAccessRequestCompletion {
+    private let lock = NSLock()
+    private var callback: AVCAccessRequestCallback?
+    private let contextAddress: UInt
+
+    init(callback: @escaping AVCAccessRequestCallback, context: UnsafeMutableRawPointer?) {
+        self.callback = callback
+        contextAddress = UInt(bitPattern: context)
+    }
+
+    func complete(granted: Bool) {
+        lock.lock()
+        let callback = self.callback
+        self.callback = nil
+        lock.unlock()
+        callback?(UnsafeMutableRawPointer(bitPattern: contextAddress), granted)
+    }
+}
+
+@_cdecl("av_capture_device_request_access")
+public func av_capture_device_request_access(
+    _ mediaTypePtr: UnsafePointer<CChar>,
+    _ callback: AVCAccessRequestCallback?,
+    _ context: UnsafeMutableRawPointer?,
+    _ outErrorMessage: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+) -> Int32 {
+    let raw = String(cString: mediaTypePtr)
+    guard let mediaType = avcDecodeMediaType(raw), mediaType == .audio || mediaType == .video else {
+        outErrorMessage?.pointee = ffiString("access requests are only defined for audio and video capture, not \(raw)")
+        return AVC_INVALID_ARGUMENT
+    }
+    guard let callback else {
+        outErrorMessage?.pointee = ffiString("missing access request callback")
+        return AVC_CALLBACK_ERROR
+    }
+    let completion = AVCAccessRequestCompletion(callback: callback, context: context)
+    AVCaptureDevice.requestAccess(for: mediaType) { granted in
+        completion.complete(granted: granted)
+    }
+    return AVC_OK
+}
+
 @_cdecl("av_capture_devices_json")
 public func av_capture_devices_json(
     _ mediaTypePtr: UnsafePointer<CChar>,

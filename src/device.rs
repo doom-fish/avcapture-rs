@@ -4,6 +4,11 @@ use core::ffi::{c_char, c_void};
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 use core::ptr;
 use std::ffi::CString;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::task::Waker;
+#[cfg(any(test, feature = "async"))]
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use apple_cf::cm::CMTime;
 use serde::{Deserialize, Serialize};
@@ -918,6 +923,13 @@ impl CaptureDevice {
             return Err(unsafe { from_swift(raw, err) });
         }
         Ok(AuthorizationStatus::from_raw(raw))
+    }
+
+    pub fn request_access(
+        media_type: &MediaType,
+        timeout: Duration,
+    ) -> Result<bool, AVCaptureError> {
+        AccessRequest::start(media_type)?.wait_timeout(timeout)
     }
 
     /// Returns the devices matching the requested media type.
@@ -1868,6 +1880,118 @@ fn validate_color_space(
     )))
 }
 
+fn access_request_media_type(media_type: &MediaType) -> Result<CString, AVCaptureError> {
+    match media_type {
+        MediaType::Audio | MediaType::Video => cstring(media_type.as_raw(), "media type"),
+        other => Err(AVCaptureError::InvalidArgument(format!(
+            "access requests are only defined for audio and video capture, not {}",
+            other.as_raw()
+        ))),
+    }
+}
+
+#[derive(Debug, Default)]
+struct AccessRequestOutcome {
+    granted: Option<bool>,
+    waker: Option<Waker>,
+}
+
+#[derive(Debug, Default)]
+struct AccessRequestState {
+    outcome: Mutex<AccessRequestOutcome>,
+    decided: Condvar,
+}
+
+impl AccessRequestState {
+    fn complete(&self, granted: bool) {
+        let waker = {
+            let mut outcome = self.outcome.lock().unwrap_or_else(PoisonError::into_inner);
+            outcome.granted = Some(granted);
+            outcome.waker.take()
+        };
+        self.decided.notify_all();
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+
+    fn wait_timeout(&self, timeout: Duration) -> Result<bool, AVCaptureError> {
+        let granted = self
+            .decided
+            .wait_timeout_while(
+                self.outcome.lock().unwrap_or_else(PoisonError::into_inner),
+                timeout,
+                |outcome| outcome.granted.is_none(),
+            )
+            .unwrap_or_else(PoisonError::into_inner)
+            .0
+            .granted;
+        granted.ok_or_else(|| {
+            AVCaptureError::Timeout(format!(
+                "no capture access decision arrived within {timeout:?}"
+            ))
+        })
+    }
+
+    #[cfg(any(test, feature = "async"))]
+    fn poll(&self, cx: &Context<'_>) -> Poll<bool> {
+        let mut outcome = self.outcome.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(granted) = outcome.granted {
+            return Poll::Ready(granted);
+        }
+        outcome.waker = Some(cx.waker().clone());
+        Poll::Pending
+    }
+}
+
+#[derive(Debug)]
+pub struct AccessRequest {
+    state: Arc<AccessRequestState>,
+}
+
+impl AccessRequest {
+    pub fn start(media_type: &MediaType) -> Result<Self, AVCaptureError> {
+        let media_type = access_request_media_type(media_type)?;
+        let state = Arc::new(AccessRequestState::default());
+        let context = Arc::into_raw(Arc::clone(&state))
+            .cast_mut()
+            .cast::<c_void>();
+        let mut err: *mut c_char = ptr::null_mut();
+        let status = unsafe {
+            ffi::device::av_capture_device_request_access(
+                media_type.as_ptr(),
+                Some(access_request_trampoline),
+                context,
+                &raw mut err,
+            )
+        };
+        if status != ffi::status::OK {
+            drop(unsafe { Arc::from_raw(context.cast::<AccessRequestState>()) });
+            return Err(unsafe { from_swift(status, err) });
+        }
+        Ok(Self { state })
+    }
+
+    fn wait_timeout(&self, timeout: Duration) -> Result<bool, AVCaptureError> {
+        self.state.wait_timeout(timeout)
+    }
+
+    #[cfg(feature = "async")]
+    pub fn poll_decision(&self, cx: &Context<'_>) -> Poll<bool> {
+        self.state.poll(cx)
+    }
+}
+
+unsafe extern "C" fn access_request_trampoline(context: *mut c_void, granted: bool) {
+    if context.is_null() {
+        return;
+    }
+    let state = unsafe { Arc::from_raw(context.cast::<AccessRequestState>()) };
+    doom_fish_utils::panic_safe::catch_user_panic("access_request_trampoline", move || {
+        state.complete(granted);
+    });
+}
+
 fn preset_cstring(preset: &CaptureSessionPreset) -> Result<CString, AVCaptureError> {
     CString::new(preset.as_raw()).map_err(|error| {
         AVCaptureError::InvalidArgument(format!("preset contains NUL byte: {error}"))
@@ -1907,8 +2031,9 @@ fn validate_normalized_point(point: (f64, f64)) -> Result<(f64, f64), AVCaptureE
 #[cfg(test)]
 mod tests {
     use super::{
-        option_bool_from_raw, validate_color_space, validate_frame_duration,
-        validate_normalized_point, validate_torch_level, AuthorizationStatus,
+        access_request_media_type, access_request_trampoline, option_bool_from_raw,
+        validate_color_space, validate_frame_duration, validate_normalized_point,
+        validate_torch_level, AccessRequestState, AuthorizationStatus,
         CaptureCameraLensSmudgeDetectionStatus, CaptureColorSpace, CaptureDevice,
         CaptureDeviceType, CaptureExposureMode, CaptureFocusMode, CaptureMicrophoneMode,
         CapturePrimaryConstituentDeviceRestrictedSwitchingBehaviorConditions, MediaType,
@@ -1919,6 +2044,10 @@ mod tests {
     use apple_cf::cm::CMTime;
     use core::ffi::{c_char, c_void};
     use core::ptr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::task::{Context, Poll, Wake, Waker};
+    use std::time::Duration;
 
     fn frame_rate_range(min_rate: i32, max_rate: i32) -> FrameRateRange {
         FrameRateRange {
@@ -2053,6 +2182,84 @@ mod tests {
     }
 
     #[test]
+    fn access_requests_are_limited_to_audio_and_video() {
+        assert!(access_request_media_type(&MediaType::Audio).is_ok());
+        assert!(access_request_media_type(&MediaType::Video).is_ok());
+        for media_type in [
+            MediaType::Muxed,
+            MediaType::Metadata,
+            MediaType::Unknown("depth".to_owned()),
+        ] {
+            assert!(
+                is_invalid_argument(&access_request_media_type(&media_type)),
+                "{media_type:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn access_request_wait_reports_a_distinct_timeout() {
+        let state = AccessRequestState::default();
+
+        let error = state
+            .wait_timeout(Duration::from_millis(20))
+            .expect_err("a request without a decision must time out");
+
+        assert!(matches!(error, AVCaptureError::Timeout(_)));
+    }
+
+    #[test]
+    fn access_request_wait_returns_a_decision_from_another_thread() {
+        let state = Arc::new(AccessRequestState::default());
+        let completer = Arc::clone(&state);
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            completer.complete(true);
+        });
+
+        assert!(state
+            .wait_timeout(Duration::from_secs(10))
+            .expect("the decision should arrive"));
+        thread.join().expect("completer thread should not panic");
+    }
+
+    #[test]
+    fn access_request_trampoline_consumes_the_native_reference() {
+        let state = Arc::new(AccessRequestState::default());
+        let context = Arc::into_raw(Arc::clone(&state))
+            .cast_mut()
+            .cast::<c_void>();
+        assert_eq!(Arc::strong_count(&state), 2);
+
+        unsafe { access_request_trampoline(context, false) };
+
+        assert_eq!(Arc::strong_count(&state), 1);
+        assert!(!state
+            .wait_timeout(Duration::ZERO)
+            .expect("the decision was delivered"));
+        unsafe { access_request_trampoline(core::ptr::null_mut(), true) };
+    }
+
+    #[test]
+    fn access_request_decision_after_a_timeout_is_still_consumed() {
+        let state = Arc::new(AccessRequestState::default());
+        let context = Arc::into_raw(Arc::clone(&state))
+            .cast_mut()
+            .cast::<c_void>();
+        assert!(matches!(
+            state.wait_timeout(Duration::from_millis(1)),
+            Err(AVCaptureError::Timeout(_))
+        ));
+
+        unsafe { access_request_trampoline(context, true) };
+
+        assert_eq!(Arc::strong_count(&state), 1);
+        assert!(state
+            .wait_timeout(Duration::ZERO)
+            .expect("the late decision was recorded"));
+    }
+
+    #[test]
     fn bridge_rejects_unsupported_frame_durations_without_raising() {
         if !matches!(
             CaptureDevice::authorization_status(&MediaType::Video),
@@ -2083,6 +2290,28 @@ mod tests {
                 "unexpected {error:?}"
             );
         }
+    }
+
+    struct CountingWaker(AtomicUsize);
+
+    impl Wake for CountingWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn access_request_poll_wakes_the_waiting_task() {
+        let counter = Arc::new(CountingWaker(AtomicUsize::new(0)));
+        let waker = Waker::from(Arc::clone(&counter));
+        let context = Context::from_waker(&waker);
+        let state = AccessRequestState::default();
+
+        assert_eq!(state.poll(&context), Poll::Pending);
+        state.complete(true);
+
+        assert_eq!(counter.0.load(Ordering::SeqCst), 1);
+        assert_eq!(state.poll(&context), Poll::Ready(true));
     }
 
     #[test]

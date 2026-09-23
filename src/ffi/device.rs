@@ -2,9 +2,17 @@ use core::ffi::{c_char, c_void};
 
 use apple_cf::cm::CMTime;
 
+pub type AccessRequestCallback = unsafe extern "C" fn(context: *mut c_void, granted: bool);
+
 extern "C" {
     pub fn av_capture_authorization_status(
         media_type: *const c_char,
+        out_error_message: *mut *mut c_char,
+    ) -> i32;
+    pub fn av_capture_device_request_access(
+        media_type: *const c_char,
+        callback: Option<AccessRequestCallback>,
+        context: *mut c_void,
         out_error_message: *mut *mut c_char,
     ) -> i32;
     pub fn av_capture_devices_json(
