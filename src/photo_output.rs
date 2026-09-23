@@ -11,7 +11,9 @@ use crate::error::{from_swift, report_callback_error, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{parse_json_and_free, VideoDimensions};
 use crate::output::CaptureOutputRef;
-use crate::photo::{Photo, PhotoQualityPrioritization, PhotoSettings, ResolvedPhotoSettingsInfo};
+use crate::photo::{
+    Photo, PhotoQualityPrioritization, PhotoSettings, PhotoSettingsInfo, ResolvedPhotoSettingsInfo,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(from = "i32", into = "i32")]
@@ -348,6 +350,7 @@ impl PhotoOutput {
     where
         F: FnMut(Result<PhotoCaptureEvent, AVCaptureError>) + Send + 'static,
     {
+        validate_photo_settings(&settings.info()?, &self.info()?)?;
         let state = ArcContext::new(PhotoCaptureEventCallbackState::new(callback));
         let userdata = state.as_ptr();
         let mut err: *mut c_char = ptr::null_mut();
@@ -367,6 +370,37 @@ impl PhotoOutput {
         }
         Ok(())
     }
+}
+
+fn validate_photo_settings(
+    settings: &PhotoSettingsInfo,
+    output: &PhotoOutputInfo,
+) -> Result<(), AVCaptureError> {
+    if settings.used_for_capture {
+        return Err(AVCaptureError::InvalidArgument(
+            "photo settings have already been used for capture; create a copy with a new unique ID"
+                .to_owned(),
+        ));
+    }
+    if let Some(mode) = settings.flash_mode {
+        if mode != CaptureFlashMode::Off && !output.supported_flash_modes.contains(&mode) {
+            return Err(AVCaptureError::InvalidArgument(format!(
+                "flash mode {mode:?} is not supported by the photo output (supported: {:?})",
+                output.supported_flash_modes
+            )));
+        }
+    }
+    if let (Some(requested), Some(maximum)) = (
+        settings.photo_quality_prioritization,
+        output.max_photo_quality_prioritization,
+    ) {
+        if requested.as_raw() > maximum.as_raw() {
+            return Err(AVCaptureError::InvalidArgument(format!(
+                "photo quality prioritization {requested:?} exceeds the photo output's maximum {maximum:?}; raise it with set_max_photo_quality_prioritization first"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Safe wrapper around `AVCapturePhotoOutputReadinessCoordinator`.
@@ -586,4 +620,137 @@ unsafe extern "C" fn photo_output_readiness_trampoline(
         "photo_output_readiness_trampoline",
         payload.capture_readiness,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_photo_settings, PhotoOutputInfo};
+    use crate::device::CaptureFlashMode;
+    use crate::error::AVCaptureError;
+    use crate::photo::{PhotoQualityPrioritization, PhotoSettingsInfo};
+
+    fn settings(
+        flash_mode: Option<CaptureFlashMode>,
+        photo_quality_prioritization: Option<PhotoQualityPrioritization>,
+    ) -> PhotoSettingsInfo {
+        PhotoSettingsInfo {
+            unique_id: 1,
+            processed_file_type: None,
+            flash_mode,
+            photo_quality_prioritization,
+            used_for_capture: false,
+        }
+    }
+
+    fn output(
+        supported_flash_modes: Vec<CaptureFlashMode>,
+        max_photo_quality_prioritization: Option<PhotoQualityPrioritization>,
+    ) -> PhotoOutputInfo {
+        PhotoOutputInfo {
+            connection_count: 1,
+            available_photo_codec_types: Vec::new(),
+            available_photo_file_types: Vec::new(),
+            available_photo_pixel_format_types: Vec::new(),
+            available_raw_photo_pixel_format_types: None,
+            supported_flash_modes,
+            max_photo_dimensions: None,
+            capture_readiness: None,
+            max_photo_quality_prioritization,
+            high_resolution_capture_enabled: false,
+            responsive_capture_enabled: None,
+            callback_installed: false,
+        }
+    }
+
+    const fn is_invalid_argument(result: &Result<(), AVCaptureError>) -> bool {
+        matches!(result, Err(AVCaptureError::InvalidArgument(_)))
+    }
+
+    #[test]
+    fn flash_mode_must_be_supported_by_the_output() {
+        let flashless = output(
+            vec![CaptureFlashMode::Off],
+            Some(PhotoQualityPrioritization::Balanced),
+        );
+
+        assert!(is_invalid_argument(&validate_photo_settings(
+            &settings(Some(CaptureFlashMode::Auto), None),
+            &flashless
+        )));
+        assert!(is_invalid_argument(&validate_photo_settings(
+            &settings(Some(CaptureFlashMode::On), None),
+            &flashless
+        )));
+        assert!(
+            validate_photo_settings(&settings(Some(CaptureFlashMode::Off), None), &flashless)
+                .is_ok()
+        );
+
+        let with_flash = output(
+            vec![
+                CaptureFlashMode::Off,
+                CaptureFlashMode::On,
+                CaptureFlashMode::Auto,
+            ],
+            None,
+        );
+        assert!(validate_photo_settings(
+            &settings(Some(CaptureFlashMode::Auto), None),
+            &with_flash
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn flash_off_is_accepted_even_without_reported_modes() {
+        assert!(validate_photo_settings(
+            &settings(Some(CaptureFlashMode::Off), None),
+            &output(Vec::new(), None)
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn quality_prioritization_may_not_exceed_the_output_maximum() {
+        let balanced = output(
+            vec![CaptureFlashMode::Off],
+            Some(PhotoQualityPrioritization::Balanced),
+        );
+
+        assert!(is_invalid_argument(&validate_photo_settings(
+            &settings(None, Some(PhotoQualityPrioritization::Quality)),
+            &balanced
+        )));
+        assert!(validate_photo_settings(
+            &settings(None, Some(PhotoQualityPrioritization::Balanced)),
+            &balanced
+        )
+        .is_ok());
+        assert!(validate_photo_settings(
+            &settings(None, Some(PhotoQualityPrioritization::Speed)),
+            &balanced
+        )
+        .is_ok());
+        assert!(validate_photo_settings(
+            &settings(None, Some(PhotoQualityPrioritization::Quality)),
+            &output(Vec::new(), Some(PhotoQualityPrioritization::Quality))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn settings_without_reported_values_are_not_rejected() {
+        assert!(validate_photo_settings(&settings(None, None), &output(Vec::new(), None)).is_ok());
+    }
+
+    #[test]
+    fn used_settings_are_rejected() {
+        let mut used = settings(None, None);
+        used.used_for_capture = true;
+
+        assert!(is_invalid_argument(&validate_photo_settings(
+            &used,
+            &output(vec![CaptureFlashMode::Off], None)
+        )));
+    }
 }

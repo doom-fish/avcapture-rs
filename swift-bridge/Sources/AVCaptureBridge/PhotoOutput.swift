@@ -1,3 +1,4 @@
+import AVCaptureObjCBridge
 import AVFoundation
 import Foundation
 
@@ -79,6 +80,10 @@ private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegat
         keepAlive = self
     }
 
+    func deactivate() {
+        keepAlive = nil
+    }
+
     func photoOutput(
         _ output: AVCapturePhotoOutput,
         didFinishProcessingPhoto photo: AVCapturePhoto,
@@ -114,6 +119,25 @@ private final class PhotoOutputReadinessCoordinatorDelegateBox: NSObject,
     ) {
         owner?.emitCaptureReadiness(captureReadiness)
     }
+}
+
+func avcPhotoSettingsProblem(
+    _ photoOutput: AVCapturePhotoOutput,
+    _ settings: AVCapturePhotoSettings
+) -> String? {
+    guard #available(macOS 13.0, *) else {
+        return nil
+    }
+    let flashMode = settings.flashMode
+    if flashMode != .off && !photoOutput.supportedFlashModes.contains(flashMode) {
+        return "flash mode \(flashMode.rawValue) is not in the photo output's supported flash modes \(photoOutput.supportedFlashModes.map(\.rawValue))"
+    }
+    let prioritization = settings.photoQualityPrioritization
+    let maximum = photoOutput.maxPhotoQualityPrioritization
+    if prioritization.rawValue > maximum.rawValue {
+        return "photo quality prioritization \(prioritization.rawValue) exceeds the photo output's maximum \(maximum.rawValue); raise the output's max photo quality prioritization first"
+    }
+    return nil
 }
 
 final class PhotoOutputBox: CaptureOutputBoxBase {
@@ -200,8 +224,21 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
         guard !photoOutput.connections.isEmpty else {
             throw BridgeError.message("photo output is not attached to a session")
         }
-        guard photoOutput.connection(with: .video) != nil || photoOutput.connection(with: .muxed) != nil else {
+        guard let videoConnection = photoOutput.connection(with: .video) ?? photoOutput.connection(with: .muxed) else {
             throw BridgeError.message("photo output has no video-capable connection")
+        }
+        guard videoConnection.isEnabled, videoConnection.isActive else {
+            throw BridgeError.message("photo output has no active and enabled video connection")
+        }
+        let settingsBox = avcPhotoSettingsBox(settingsPtr)
+        guard !settingsBox.hasBeenUsedForCapture else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "photo settings have already been used for capture; create a copy with a new unique ID"
+            )
+        }
+        if let problem = avcPhotoSettingsProblem(photoOutput, settingsBox.settings) {
+            throw BridgeError.status(AVC_INVALID_ARGUMENT, problem)
         }
 
         let callbackBox = AVCPhotoCallbackBox(
@@ -214,7 +251,7 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
         let delegate = PhotoCaptureDelegate(outputOwner: self, state: state)
         try captureSlot.acquire(delegate)
         do {
-            try avcPhotoSettingsBox(settingsPtr).consumeForCapture()
+            try settingsBox.consumeForCapture()
         } catch {
             _ = captureSlot.release(delegate)
             callbackBox.dispose()
@@ -224,10 +261,13 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
         captureDelegate = delegate
         captureLock.unlock()
         delegate.activate()
-        photoOutput.capturePhoto(
-            with: avcPhotoSettingsBox(settingsPtr).settings,
-            delegate: delegate
-        )
+        var error: NSError?
+        guard AVCTryCapturePhoto(photoOutput, settingsBox.settings, delegate, &error) else {
+            delegate.deactivate()
+            finishCapture(delegate: delegate)
+            callbackBox.dispose()
+            throw avcCaughtExceptionError(error, "capturePhoto")
+        }
     }
 
     fileprivate func finishCapture(delegate: PhotoCaptureDelegate) {
@@ -245,12 +285,14 @@ final class PhotoOutputBox: CaptureOutputBoxBase {
 @available(macOS 14.0, *)
 final class PhotoOutputReadinessCoordinatorBox: NSObject {
     let coordinator: AVCapturePhotoOutputReadinessCoordinator
+    private let photoOutput: AVCapturePhotoOutput
     private let callbackLock = NSLock()
     private let delegateSlot = AVCDelegateSlot("photo readiness delegate")
     private var delegateBox: PhotoOutputReadinessCoordinatorDelegateBox?
     private var callbackBox: AVCJsonCallbackBox?
 
     init(photoOutput: AVCapturePhotoOutput) {
+        self.photoOutput = photoOutput
         coordinator = AVCapturePhotoOutputReadinessCoordinator(photoOutput: photoOutput)
     }
 
@@ -309,8 +351,21 @@ final class PhotoOutputReadinessCoordinatorBox: NSObject {
         )
     }
 
-    fileprivate func startTrackingCaptureRequest(settingsPtr: UnsafeMutableRawPointer) {
-        coordinator.startTrackingCaptureRequest(using: avcPhotoSettingsBox(settingsPtr).settings)
+    fileprivate func startTrackingCaptureRequest(settingsPtr: UnsafeMutableRawPointer) throws {
+        let settingsBox = avcPhotoSettingsBox(settingsPtr)
+        guard !settingsBox.hasBeenUsedForCapture else {
+            throw BridgeError.status(
+                AVC_INVALID_ARGUMENT,
+                "photo settings that were already used for capture cannot be tracked"
+            )
+        }
+        if let problem = avcPhotoSettingsProblem(photoOutput, settingsBox.settings) {
+            throw BridgeError.status(AVC_INVALID_ARGUMENT, problem)
+        }
+        var error: NSError?
+        guard AVCTryStartTrackingCaptureRequest(coordinator, settingsBox.settings, &error) else {
+            throw avcCaughtExceptionError(error, "startTrackingCaptureRequest")
+        }
     }
 
     fileprivate func stopTrackingCaptureRequest(settingsUniqueID: Int64) {
@@ -527,8 +582,13 @@ public func av_capture_photo_output_readiness_coordinator_start_tracking_capture
         return AVC_OUTPUT_ERROR
     }
     let coordinator = avcUnretained(coordinatorPtr, as: PhotoOutputReadinessCoordinatorBox.self)
-    coordinator.startTrackingCaptureRequest(settingsPtr: settingsPtr)
-    return AVC_OK
+    do {
+        try coordinator.startTrackingCaptureRequest(settingsPtr: settingsPtr)
+        return AVC_OK
+    } catch {
+        outErrorMessage?.pointee = ffiString(error.localizedDescription)
+        return avcStatus(for: error, default: AVC_OUTPUT_ERROR)
+    }
 }
 
 @_cdecl("av_capture_photo_output_readiness_coordinator_stop_tracking_capture_request")
