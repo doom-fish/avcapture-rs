@@ -13,6 +13,7 @@ impl<T> ArcContext<T> {
         Arc::as_ptr(&self.0).cast_mut().cast()
     }
 
+    #[cfg(any(feature = "async", test))]
     pub(crate) fn into_raw(self) -> *mut c_void {
         Arc::into_raw(self.0).cast_mut().cast()
     }
