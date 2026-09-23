@@ -224,7 +224,7 @@ impl CaptureTimecode {
             ffi::timecode::av_capture_timecode_advanced_by_frames_json(
                 timecode.as_ptr(),
                 frames_to_add,
-                &mut err,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -246,7 +246,7 @@ impl CaptureTimecode {
             ffi::timecode::av_capture_timecode_create_metadata_sample_buffer_associated_with_presentation_time_stamp(
                 timecode.as_ptr(),
                 presentation_time_stamp.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -267,7 +267,7 @@ impl CaptureTimecode {
             ffi::timecode::av_capture_timecode_create_metadata_sample_buffer_for_duration(
                 timecode.as_ptr(),
                 duration.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -374,7 +374,7 @@ impl CaptureTimecodeSource {
     pub fn info(&self) -> Result<CaptureTimecodeSourceInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::timecode::av_capture_timecode_source_info_json(self.ptr, &mut err) };
+            unsafe { ffi::timecode::av_capture_timecode_source_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -420,7 +420,7 @@ impl Drop for CaptureTimecodeGenerator {
 impl CaptureTimecodeGenerator {
     fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::timecode::av_capture_timecode_generator_create(&mut err) };
+        let ptr = unsafe { ffi::timecode::av_capture_timecode_generator_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -430,8 +430,9 @@ impl CaptureTimecodeGenerator {
     /// Returns a snapshot of `AVCaptureTimecodeGenerator` state.
     pub fn info(&self) -> Result<CaptureTimecodeGeneratorInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr =
-            unsafe { ffi::timecode::av_capture_timecode_generator_info_json(self.ptr, &mut err) };
+        let json_ptr = unsafe {
+            ffi::timecode::av_capture_timecode_generator_info_json(self.ptr, &raw mut err)
+        };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -448,7 +449,9 @@ impl CaptureTimecodeGenerator {
             let mut err: *mut c_char = ptr::null_mut();
             let ptr = unsafe {
                 ffi::timecode::av_capture_timecode_generator_available_source_at_index(
-                    self.ptr, index, &mut err,
+                    self.ptr,
+                    index,
+                    &raw mut err,
                 )
             };
             if ptr.is_null() {
@@ -463,7 +466,7 @@ impl CaptureTimecodeGenerator {
     pub fn current_source(&self) -> Result<Option<CaptureTimecodeSource>, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
-            ffi::timecode::av_capture_timecode_generator_current_source(self.ptr, &mut err)
+            ffi::timecode::av_capture_timecode_generator_current_source(self.ptr, &raw mut err)
         };
         if ptr.is_null() {
             if err.is_null() {
@@ -511,7 +514,7 @@ impl CaptureTimecodeGenerator {
             ffi::timecode::av_capture_timecode_generator_set_synchronization_timeout(
                 self.ptr,
                 synchronization_timeout,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -535,7 +538,7 @@ impl CaptureTimecodeGenerator {
             ffi::timecode::av_capture_timecode_generator_set_timecode_alignment_offset(
                 self.ptr,
                 timecode_alignment_offset,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -555,7 +558,7 @@ impl CaptureTimecodeGenerator {
             ffi::timecode::av_capture_timecode_generator_set_timecode_frame_duration_json(
                 self.ptr,
                 frame_duration.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -572,7 +575,9 @@ impl CaptureTimecodeGenerator {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::timecode::av_capture_timecode_generator_start_synchronization(
-                self.ptr, source.ptr, &mut err,
+                self.ptr,
+                source.ptr,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -586,7 +591,8 @@ impl CaptureTimecodeGenerator {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
             ffi::timecode::av_capture_timecode_generator_generate_initial_timecode_json(
-                self.ptr, &mut err,
+                self.ptr,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -620,7 +626,7 @@ impl CaptureTimecodeGenerator {
                 Some(timecode_delegate_trampoline),
                 userdata,
                 Some(timecode_delegate_drop),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -645,7 +651,7 @@ impl VideoDataOutput {
     /// Returns the frame-count `AVCaptureTimecodeSource`.
     pub fn frame_count_timecode_source() -> Result<CaptureTimecodeSource, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::timecode::av_capture_timecode_source_frame_count(&mut err) };
+        let ptr = unsafe { ffi::timecode::av_capture_timecode_source_frame_count(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -655,7 +661,8 @@ impl VideoDataOutput {
     /// Returns the real-time-clock `AVCaptureTimecodeSource`.
     pub fn real_time_clock_timecode_source() -> Result<CaptureTimecodeSource, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::timecode::av_capture_timecode_source_real_time_clock(&mut err) };
+        let ptr =
+            unsafe { ffi::timecode::av_capture_timecode_source_real_time_clock(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }

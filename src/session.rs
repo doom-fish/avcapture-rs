@@ -191,7 +191,7 @@ impl CaptureSession {
     /// Creates a new `AVCaptureSession` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::session::av_capture_session_create(&mut err) };
+        let ptr = unsafe { ffi::session::av_capture_session_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::SESSION_ERROR, err) });
         }
@@ -201,7 +201,8 @@ impl CaptureSession {
     /// Returns a snapshot of `AVCaptureSession` state.
     pub fn info(&self) -> Result<CaptureSessionInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr = unsafe { ffi::session::av_capture_session_info_json(self.ptr, &mut err) };
+        let json_ptr =
+            unsafe { ffi::session::av_capture_session_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::SESSION_ERROR, err) });
         }
@@ -432,7 +433,7 @@ impl CaptureSession {
         for index in 0..count {
             let mut err: *mut c_char = ptr::null_mut();
             let ptr = unsafe {
-                ffi::session::av_capture_session_connection_at_index(self.ptr, index, &mut err)
+                ffi::session::av_capture_session_connection_at_index(self.ptr, index, &raw mut err)
             };
             if ptr.is_null() {
                 return Err(unsafe { from_swift(ffi::status::SESSION_ERROR, err) });
@@ -476,7 +477,7 @@ impl CaptureSession {
         let preset = preset_cstring(preset)?;
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::session::av_capture_session_set_preset(self.ptr, preset.as_ptr(), &mut err)
+            ffi::session::av_capture_session_set_preset(self.ptr, preset.as_ptr(), &raw mut err)
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
@@ -493,7 +494,7 @@ impl CaptureSession {
     pub fn add_input<I: CaptureInputRef>(&self, input: &I) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::session::av_capture_session_add_input(self.ptr, input.input_ptr(), &mut err)
+            ffi::session::av_capture_session_add_input(self.ptr, input.input_ptr(), &raw mut err)
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
@@ -515,7 +516,7 @@ impl CaptureSession {
     pub fn add_output<O: CaptureOutputRef>(&self, output: &O) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::session::av_capture_session_add_output(self.ptr, output.output_ptr(), &mut err)
+            ffi::session::av_capture_session_add_output(self.ptr, output.output_ptr(), &raw mut err)
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });

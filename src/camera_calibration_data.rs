@@ -129,7 +129,10 @@ impl CameraCalibrationData {
     pub fn info(&self) -> Result<CameraCalibrationDataInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::camera_calibration_data::av_camera_calibration_data_info_json(self.ptr, &mut err)
+            ffi::camera_calibration_data::av_camera_calibration_data_info_json(
+                self.ptr,
+                &raw mut err,
+            )
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });

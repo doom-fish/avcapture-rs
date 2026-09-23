@@ -124,8 +124,9 @@ impl CaptureDeviceFormat {
     /// Returns a snapshot of `AVCaptureDeviceFormat` state.
     pub fn info(&self) -> Result<CaptureDeviceFormatInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr =
-            unsafe { ffi::device_format::av_capture_device_format_info_json(self.ptr, &mut err) };
+        let json_ptr = unsafe {
+            ffi::device_format::av_capture_device_format_info_json(self.ptr, &raw mut err)
+        };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
         }

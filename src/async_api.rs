@@ -960,8 +960,8 @@ impl VideoSampleBufferStream {
                 Some(video_sample_cb),
                 ctx,
                 Some(release_video_sample_ctx),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if handle_ptr.is_null() {
@@ -1001,8 +1001,8 @@ impl VideoDataOutputEventStream {
                 Some(video_data_output_event_cb),
                 ctx,
                 Some(release_video_data_output_event_ctx),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if handle_ptr.is_null() {
@@ -1042,8 +1042,8 @@ impl AudioSampleBufferStream {
                 Some(audio_sample_cb),
                 ctx,
                 Some(release_audio_sample_ctx),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if handle_ptr.is_null() {
@@ -1095,8 +1095,8 @@ impl FileRecordingStream {
                 Some(file_recording_cb),
                 ctx,
                 Some(release_file_recording_ctx),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if handle_ptr.is_null() {
@@ -1176,8 +1176,8 @@ impl AudioFileRecordingStream {
                 Some(file_recording_cb),
                 ctx,
                 Some(release_file_recording_ctx),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if handle_ptr.is_null() {
@@ -1232,8 +1232,8 @@ impl MovieFileSampleBufferBoundaryStream {
                 Some(file_output_sample_buffer_cb),
                 ctx,
                 Some(release_file_output_sample_buffer_ctx),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if handle_ptr.is_null() {
@@ -1273,8 +1273,8 @@ impl AudioFileSampleBufferBoundaryStream {
                 Some(file_output_sample_buffer_cb),
                 ctx,
                 Some(release_file_output_sample_buffer_ctx),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if handle_ptr.is_null() {
@@ -1353,8 +1353,8 @@ impl MetadataObjectsStream {
                 Some(metadata_objects_cb),
                 ctx,
                 Some(release_metadata_objects_ctx),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if handle_ptr.is_null() {

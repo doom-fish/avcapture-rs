@@ -233,7 +233,8 @@ impl MovieFileOutput {
     /// Creates a new `AVCaptureMovieFileOutput` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::movie_file_output::av_capture_movie_file_output_create(&mut err) };
+        let ptr =
+            unsafe { ffi::movie_file_output::av_capture_movie_file_output_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
@@ -244,7 +245,7 @@ impl MovieFileOutput {
     pub fn info(&self) -> Result<MovieFileOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::movie_file_output::av_capture_movie_file_output_info_json(self.ptr, &mut err)
+            ffi::movie_file_output::av_capture_movie_file_output_info_json(self.ptr, &raw mut err)
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
@@ -345,7 +346,7 @@ impl MovieFileOutput {
                 ptr::null_mut(),
                 None,
                 None,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -396,7 +397,7 @@ impl MovieFileOutput {
                 userdata,
                 Some(movie_recording_callback_retain),
                 Some(movie_recording_callback_release),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -482,7 +483,9 @@ impl MovieFileOutput {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::movie_file_output::av_capture_movie_file_output_set_spatial_video_capture_enabled(
-                self.ptr, enabled, &mut err,
+                self.ptr,
+                enabled,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -496,7 +499,8 @@ impl AudioFileOutput {
     /// Creates a new `AVCaptureAudioFileOutput` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::movie_file_output::av_capture_audio_file_output_create(&mut err) };
+        let ptr =
+            unsafe { ffi::movie_file_output::av_capture_audio_file_output_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
@@ -507,7 +511,7 @@ impl AudioFileOutput {
     pub fn info(&self) -> Result<AudioFileOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::movie_file_output::av_capture_audio_file_output_info_json(self.ptr, &mut err)
+            ffi::movie_file_output::av_capture_audio_file_output_info_json(self.ptr, &raw mut err)
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
@@ -596,7 +600,7 @@ impl AudioFileOutput {
             ffi::movie_file_output::av_capture_audio_file_output_set_audio_settings_json(
                 self.ptr,
                 settings.as_ref().map_or(ptr::null(), |json| json.as_ptr()),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -639,7 +643,7 @@ impl AudioFileOutput {
                 ptr::null_mut(),
                 None,
                 None,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -695,7 +699,7 @@ impl AudioFileOutput {
                 userdata,
                 Some(audio_file_recording_callback_retain),
                 Some(audio_file_recording_callback_release),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -795,7 +799,7 @@ where
             userdata,
             Some(file_output_sample_buffer_callback_retain),
             Some(file_output_sample_buffer_callback_release),
-            &mut err,
+            &raw mut err,
         )
     };
     if status != ffi::status::OK {
@@ -939,8 +943,8 @@ mod tests {
                 path.len(),
                 policy as i32,
                 native_error_mode,
-                &mut had_error,
-                &mut error,
+                &raw mut had_error,
+                &raw mut error,
             )
         };
         let error = if error.is_null() {

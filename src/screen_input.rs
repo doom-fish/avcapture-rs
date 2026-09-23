@@ -54,7 +54,7 @@ impl ScreenInput {
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr =
-            unsafe { ffi::screen_input::av_capture_screen_input_create_main_display(&mut err) };
+            unsafe { ffi::screen_input::av_capture_screen_input_create_main_display(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::INPUT_ERROR, err) });
         }
@@ -65,7 +65,10 @@ impl ScreenInput {
     pub fn with_display_id(display_id: u32) -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
-            ffi::screen_input::av_capture_screen_input_create_with_display_id(display_id, &mut err)
+            ffi::screen_input::av_capture_screen_input_create_with_display_id(
+                display_id,
+                &raw mut err,
+            )
         };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::INPUT_ERROR, err) });
@@ -77,7 +80,7 @@ impl ScreenInput {
     pub fn info(&self) -> Result<ScreenInputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::screen_input::av_capture_screen_input_info_json(self.ptr, &mut err) };
+            unsafe { ffi::screen_input::av_capture_screen_input_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::INPUT_ERROR, err) });
         }

@@ -140,7 +140,7 @@ impl VideoDataOutput {
     /// Creates a new `AVCaptureVideoDataOutput` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::video_data_output::av_capture_video_output_create(&mut err) };
+        let ptr = unsafe { ffi::video_data_output::av_capture_video_output_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
@@ -151,7 +151,7 @@ impl VideoDataOutput {
     pub fn info(&self) -> Result<VideoDataOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::video_data_output::av_capture_video_output_info_json(self.ptr, &mut err)
+            ffi::video_data_output::av_capture_video_output_info_json(self.ptr, &raw mut err)
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
@@ -207,7 +207,7 @@ impl VideoDataOutput {
             ffi::video_data_output::av_capture_video_output_set_video_settings_json(
                 self.ptr,
                 settings.as_ref().map_or(ptr::null(), |json| json.as_ptr()),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -251,7 +251,7 @@ impl VideoDataOutput {
                 userdata,
                 Some(video_sample_callback_retain),
                 Some(video_sample_callback_release),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -284,7 +284,7 @@ impl VideoDataOutput {
                 userdata,
                 Some(video_event_callback_retain),
                 Some(video_event_callback_release),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {

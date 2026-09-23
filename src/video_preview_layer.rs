@@ -113,8 +113,8 @@ impl VideoPreviewLayer {
         let ptr = unsafe {
             ffi::video_preview_layer::av_capture_video_preview_layer_create(
                 session.ptr,
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -130,7 +130,10 @@ impl VideoPreviewLayer {
     pub fn info(&self) -> Result<VideoPreviewLayerInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::video_preview_layer::av_capture_video_preview_layer_info_json(self.ptr, &mut err)
+            ffi::video_preview_layer::av_capture_video_preview_layer_info_json(
+                self.ptr,
+                &raw mut err,
+            )
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
@@ -184,7 +187,8 @@ impl VideoPreviewLayer {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
             ffi::video_preview_layer::av_capture_video_preview_layer_native_layer_retained(
-                self.ptr, &mut err,
+                self.ptr,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -200,7 +204,10 @@ impl VideoPreviewLayer {
     pub fn connection(&self) -> Result<Option<CaptureConnection>, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
-            ffi::video_preview_layer::av_capture_video_preview_layer_connection(self.ptr, &mut err)
+            ffi::video_preview_layer::av_capture_video_preview_layer_connection(
+                self.ptr,
+                &raw mut err,
+            )
         };
         if ptr.is_null() {
             if err.is_null() {
@@ -221,7 +228,7 @@ impl VideoPreviewLayer {
             ffi::video_preview_layer::av_capture_video_preview_layer_set_video_gravity(
                 self.ptr,
                 video_gravity.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -237,7 +244,7 @@ impl VideoPreviewLayer {
             ffi::video_preview_layer::av_capture_video_preview_layer_set_session(
                 self.ptr,
                 session.ptr,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -251,7 +258,8 @@ impl VideoPreviewLayer {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::video_preview_layer::av_capture_video_preview_layer_clear_session(
-                self.ptr, &mut err,
+                self.ptr,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -270,7 +278,7 @@ impl VideoPreviewLayer {
             ffi::video_preview_layer::av_capture_video_preview_layer_set_session_with_no_connection(
                 self.ptr,
                 session.ptr,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -293,7 +301,7 @@ impl VideoPreviewLayer {
             ffi::video_preview_layer::av_capture_video_preview_layer_capture_device_point_of_interest_for_point_json(
                 self.ptr,
                 point.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -316,7 +324,7 @@ impl VideoPreviewLayer {
             ffi::video_preview_layer::av_capture_video_preview_layer_point_for_capture_device_point_of_interest_json(
                 self.ptr,
                 point.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -336,7 +344,7 @@ impl VideoPreviewLayer {
             ffi::video_preview_layer::av_capture_video_preview_layer_metadata_output_rect_of_interest_for_rect_json(
                 self.ptr,
                 rect.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -356,7 +364,7 @@ impl VideoPreviewLayer {
             ffi::video_preview_layer::av_capture_video_preview_layer_rect_for_metadata_output_rect_of_interest_json(
                 self.ptr,
                 rect.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -390,7 +398,7 @@ impl VideoPreviewLayer {
             ffi::video_preview_layer::av_capture_video_preview_layer_set_contents_scale(
                 self.ptr,
                 contents_scale,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -426,7 +434,9 @@ impl VideoPreviewLayer {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::video_preview_layer::av_capture_video_preview_layer_attach_to_host_layer(
-                self.ptr, host_layer, &mut err,
+                self.ptr,
+                host_layer,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -440,7 +450,8 @@ impl VideoPreviewLayer {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::video_preview_layer::av_capture_video_preview_layer_detach_from_host_layer(
-                self.ptr, &mut err,
+                self.ptr,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -457,7 +468,7 @@ impl VideoPreviewLayer {
     ) -> Result<(), AVCaptureError> {
         let rect = json_cstring(rect, what)?;
         let mut err: *mut c_char = ptr::null_mut();
-        let status = unsafe { setter(self.ptr, rect.as_ptr(), &mut err) };
+        let status = unsafe { setter(self.ptr, rect.as_ptr(), &raw mut err) };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
         }
@@ -469,7 +480,7 @@ impl VideoPreviewLayer {
         operation: unsafe extern "C" fn(*mut c_void, *mut *mut c_char) -> i32,
     ) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let status = unsafe { operation(self.ptr, &mut err) };
+        let status = unsafe { operation(self.ptr, &raw mut err) };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
         }

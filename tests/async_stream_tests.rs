@@ -475,7 +475,7 @@ mod async_stream {
 
         let mut error = core::ptr::null_mut();
         let output = unsafe {
-            avcapture::ffi::video_data_output::av_capture_video_output_create(&mut error)
+            avcapture::ffi::video_data_output::av_capture_video_output_create(&raw mut error)
         };
         assert!(error.is_null());
         assert!(!output.is_null());
@@ -490,7 +490,7 @@ mod async_stream {
                 core::ptr::null_mut(),
                 None,
                 None,
-                &mut error,
+                &raw mut error,
             )
         };
         assert_eq!(status, avcapture::ffi::status::OK);
@@ -554,7 +554,8 @@ mod async_stream {
             let mut context = 0_u8;
             let context = core::ptr::from_mut(&mut context).cast();
 
-            let session = unsafe { avcapture::ffi::session::av_capture_session_create(&mut error) };
+            let session =
+                unsafe { avcapture::ffi::session::av_capture_session_create(&raw mut error) };
             assert!(!session.is_null(), "{}", unsafe { take_error(error) });
             let running = unsafe {
                 avcapture::ffi::async_stream::avcapture_session_running_subscribe(
@@ -591,7 +592,7 @@ mod async_stream {
 
             let queue = std::ffi::CString::new("avcapture-legacy-async-abi")?;
             let audio = unsafe {
-                avcapture::ffi::audio_data_output::av_capture_audio_output_create(&mut error)
+                avcapture::ffi::audio_data_output::av_capture_audio_output_create(&raw mut error)
             };
             assert!(!audio.is_null(), "{}", unsafe { take_error(error) });
             let audio_stream = unsafe {
@@ -609,7 +610,9 @@ mod async_stream {
             }
 
             let movie = unsafe {
-                avcapture::ffi::movie_file_output::av_capture_movie_file_output_create(&mut error)
+                avcapture::ffi::movie_file_output::av_capture_movie_file_output_create(
+                    &raw mut error,
+                )
             };
             assert!(!movie.is_null(), "{}", unsafe { take_error(error) });
             let movie_boundary = unsafe {
@@ -627,7 +630,9 @@ mod async_stream {
             }
 
             let audio_file = unsafe {
-                avcapture::ffi::movie_file_output::av_capture_audio_file_output_create(&mut error)
+                avcapture::ffi::movie_file_output::av_capture_audio_file_output_create(
+                    &raw mut error,
+                )
             };
             assert!(!audio_file.is_null(), "{}", unsafe { take_error(error) });
             let audio_boundary = unsafe {
@@ -664,7 +669,7 @@ mod async_stream {
                     movie_path.as_ptr(),
                     Some(stream_event_callback),
                     context,
-                    &mut error,
+                    &raw mut error,
                 )
             };
             assert!(movie_recording.is_null());
@@ -680,7 +685,7 @@ mod async_stream {
                     output_type.as_ptr(),
                     Some(stream_event_callback),
                     context,
-                    &mut error,
+                    &raw mut error,
                 )
             };
             assert!(audio_recording.is_null());
@@ -693,7 +698,7 @@ mod async_stream {
             }
 
             let metadata = unsafe {
-                avcapture::ffi::metadata_output::av_capture_metadata_output_create(&mut error)
+                avcapture::ffi::metadata_output::av_capture_metadata_output_create(&raw mut error)
             };
             if metadata.is_null() {
                 let _ = unsafe { take_error(error) };
@@ -727,7 +732,7 @@ mod async_stream {
                     core::ptr::null_mut(),
                     None,
                     None,
-                    &mut error,
+                    &raw mut error,
                 )
         };
         assert_eq!(status, avcapture::ffi::status::OK);
@@ -760,8 +765,8 @@ mod async_stream {
                 Some(video_event_callback),
                 core::ptr::from_mut(&mut event_context).cast(),
                 None,
-                &mut event_status,
-                &mut error,
+                &raw mut event_status,
+                &raw mut error,
             )
         };
         assert_eq!(event_status, avcapture::ffi::status::OK);
@@ -796,8 +801,8 @@ mod async_stream {
                         Some(stream_event_callback),
                         core::ptr::from_ref(&drops).cast_mut().cast(),
                         Some(count_context_drop),
-                        &mut status,
-                        &mut error,
+                        &raw mut status,
+                        &raw mut error,
                     )
             };
             assert!(handle.is_null());
@@ -827,8 +832,8 @@ mod async_stream {
                         Some(stream_event_callback),
                         core::ptr::from_ref(&drops).cast_mut().cast(),
                         Some(count_context_drop),
-                        &mut status,
-                        &mut error,
+                        &raw mut status,
+                        &raw mut error,
                     )
             };
             assert!(handle.is_null());
@@ -839,11 +844,11 @@ mod async_stream {
 
         let mut error = core::ptr::null_mut();
         let movie = unsafe {
-            avcapture::ffi::movie_file_output::av_capture_movie_file_output_create(&mut error)
+            avcapture::ffi::movie_file_output::av_capture_movie_file_output_create(&raw mut error)
         };
         assert!(!movie.is_null(), "{}", unsafe { take_error(error) });
         let audio = unsafe {
-            avcapture::ffi::movie_file_output::av_capture_audio_file_output_create(&mut error)
+            avcapture::ffi::movie_file_output::av_capture_audio_file_output_create(&raw mut error)
         };
         assert!(!audio.is_null(), "{}", unsafe { take_error(error) });
 

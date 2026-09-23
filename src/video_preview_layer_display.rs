@@ -99,7 +99,7 @@ impl DeskViewApplication {
     fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
-            ffi::desk_view_application::av_capture_desk_view_application_create(&mut err)
+            ffi::desk_view_application::av_capture_desk_view_application_create(&raw mut err)
         };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
@@ -112,7 +112,8 @@ impl DeskViewApplication {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
             ffi::desk_view_application::av_capture_desk_view_application_info_json(
-                self.ptr, &mut err,
+                self.ptr,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -130,7 +131,7 @@ impl DeskViewApplication {
                 None,
                 ptr::null_mut(),
                 None,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -152,7 +153,7 @@ impl DeskViewApplication {
                 None,
                 ptr::null_mut(),
                 None,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -177,7 +178,7 @@ impl DeskViewApplication {
                 Some(desk_view_completion_trampoline),
                 userdata,
                 Some(desk_view_completion_drop),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -208,7 +209,7 @@ impl DeskViewApplication {
                 Some(desk_view_completion_trampoline),
                 userdata,
                 Some(desk_view_completion_drop),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -241,7 +242,7 @@ impl DeskViewApplicationLaunchConfiguration {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
             ffi::desk_view_application::av_capture_desk_view_application_launch_configuration_create(
-                &mut err,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -256,7 +257,7 @@ impl DeskViewApplicationLaunchConfiguration {
         let json_ptr = unsafe {
             ffi::desk_view_application::av_capture_desk_view_application_launch_configuration_info_json(
                 self.ptr,
-                &mut err,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -283,7 +284,7 @@ impl DeskViewApplicationLaunchConfiguration {
             ffi::desk_view_application::av_capture_desk_view_application_launch_configuration_set_main_window_frame_json(
                 self.ptr,
                 frame.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -324,7 +325,7 @@ impl ExternalDisplayConfiguration {
     fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
-            ffi::external_display::av_capture_external_display_configuration_create(&mut err)
+            ffi::external_display::av_capture_external_display_configuration_create(&raw mut err)
         };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
@@ -337,7 +338,8 @@ impl ExternalDisplayConfiguration {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
             ffi::external_display::av_capture_external_display_configuration_info_json(
-                self.ptr, &mut err,
+                self.ptr,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -395,7 +397,7 @@ impl ExternalDisplayConfiguration {
             ffi::external_display::av_capture_external_display_configuration_set_preferred_resolution_json(
                 self.ptr,
                 preferred_resolution.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -434,7 +436,7 @@ impl ExternalDisplayConfigurator {
                 device.ptr,
                 preview_layer.ptr,
                 configuration.ptr,
-                &mut err,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -448,7 +450,8 @@ impl ExternalDisplayConfigurator {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
             ffi::external_display::av_capture_external_display_configurator_info_json(
-                self.ptr, &mut err,
+                self.ptr,
+                &raw mut err,
             )
         };
         if json_ptr.is_null() {
@@ -499,7 +502,7 @@ impl VideoPreviewLayer {
     pub fn external_display_support_info() -> Result<ExternalDisplaySupportInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::external_display::av_capture_external_display_support_info_json(&mut err)
+            ffi::external_display::av_capture_external_display_support_info_json(&raw mut err)
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });

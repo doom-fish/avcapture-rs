@@ -140,7 +140,8 @@ impl CaptureControl {
     /// Returns a snapshot of `AVCaptureControl` state.
     pub fn info(&self) -> Result<CaptureControlInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr = unsafe { ffi::session::av_capture_control_info_json(self.ptr, &mut err) };
+        let json_ptr =
+            unsafe { ffi::session::av_capture_control_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(error_from_status(
                 ffi::status::SESSION_ERROR,
@@ -236,8 +237,8 @@ impl CaptureIndexPicker {
                 localized_title.as_ptr(),
                 symbol_name.as_ptr(),
                 number_of_indexes,
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -276,8 +277,8 @@ impl CaptureIndexPicker {
                 localized_title.as_ptr(),
                 symbol_name.as_ptr(),
                 titles_json.as_ptr(),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -295,8 +296,9 @@ impl CaptureIndexPicker {
     /// Returns a snapshot of `AVCaptureIndexPicker` state.
     pub fn info(&self) -> Result<CaptureIndexPickerInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr =
-            unsafe { ffi::session::av_capture_index_picker_info_json(self.control.ptr, &mut err) };
+        let json_ptr = unsafe {
+            ffi::session::av_capture_index_picker_info_json(self.control.ptr, &raw mut err)
+        };
         if json_ptr.is_null() {
             return Err(error_from_status(
                 ffi::status::SESSION_ERROR,
@@ -334,7 +336,7 @@ impl CaptureIndexPicker {
             ffi::session::av_capture_index_picker_set_selected_index(
                 self.control.ptr,
                 selected_index,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -373,7 +375,7 @@ impl CaptureIndexPicker {
                 Some(index_picker_action_trampoline),
                 userdata,
                 Some(index_picker_callback_drop),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -425,8 +427,8 @@ impl CaptureSlider {
                 symbol_name.as_ptr(),
                 min_value,
                 max_value,
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -465,8 +467,8 @@ impl CaptureSlider {
                 min_value,
                 max_value,
                 step,
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -506,8 +508,8 @@ impl CaptureSlider {
                 localized_title.as_ptr(),
                 symbol_name.as_ptr(),
                 values_json.as_ptr(),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -526,7 +528,7 @@ impl CaptureSlider {
     pub fn info(&self) -> Result<CaptureSliderInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::session::av_capture_slider_info_json(self.control.ptr, &mut err) };
+            unsafe { ffi::session::av_capture_slider_info_json(self.control.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(error_from_status(
                 ffi::status::SESSION_ERROR,
@@ -575,8 +577,9 @@ impl CaptureSlider {
     /// Sets the value on `AVCaptureSlider`.
     pub fn set_value(&self, value: f32) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let status =
-            unsafe { ffi::session::av_capture_slider_set_value(self.control.ptr, value, &mut err) };
+        let status = unsafe {
+            ffi::session::av_capture_slider_set_value(self.control.ptr, value, &raw mut err)
+        };
         if status != ffi::status::OK {
             return Err(error_from_status(
                 status,
@@ -613,7 +616,7 @@ impl CaptureSlider {
                 Some(slider_action_trampoline),
                 userdata,
                 Some(slider_callback_drop),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -657,8 +660,8 @@ impl CaptureSystemExposureBiasSlider {
                 None,
                 ptr::null_mut(),
                 None,
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -692,8 +695,8 @@ impl CaptureSystemExposureBiasSlider {
                 Some(slider_action_trampoline),
                 userdata,
                 Some(slider_callback_drop),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -734,8 +737,8 @@ impl CaptureSystemZoomSlider {
                 None,
                 ptr::null_mut(),
                 None,
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -769,8 +772,8 @@ impl CaptureSystemZoomSlider {
                 Some(slider_action_trampoline),
                 userdata,
                 Some(slider_callback_drop),
-                &mut status,
-                &mut err,
+                &raw mut status,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -799,7 +802,7 @@ pub(super) fn session_controls(
     for index in 0..count {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
-            ffi::session::av_capture_session_control_at_index(session_ptr, index, &mut err)
+            ffi::session::av_capture_session_control_at_index(session_ptr, index, &raw mut err)
         };
         if ptr.is_null() {
             return Err(error_from_status(
@@ -823,7 +826,11 @@ pub(super) fn session_add_control(
 ) -> Result<(), AVCaptureError> {
     let mut err: *mut c_char = ptr::null_mut();
     let status = unsafe {
-        ffi::session::av_capture_session_add_control(session_ptr, control.control_ptr(), &mut err)
+        ffi::session::av_capture_session_add_control(
+            session_ptr,
+            control.control_ptr(),
+            &raw mut err,
+        )
     };
     if status != ffi::status::OK {
         return Err(error_from_status(
@@ -863,7 +870,7 @@ where
             userdata,
             Some(session_controls_delegate_callback_retain),
             Some(session_controls_delegate_callback_release),
-            &mut err,
+            &raw mut err,
         )
     };
     if status != ffi::status::OK {
@@ -904,7 +911,7 @@ where
             userdata,
             Some(session_deferred_start_delegate_callback_retain),
             Some(session_deferred_start_delegate_callback_release),
-            &mut err,
+            &raw mut err,
         )
     };
     if status != ffi::status::OK {

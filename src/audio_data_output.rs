@@ -156,7 +156,7 @@ impl AudioDataOutput {
     /// Creates a new `AVCaptureAudioDataOutput` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::audio_data_output::av_capture_audio_output_create(&mut err) };
+        let ptr = unsafe { ffi::audio_data_output::av_capture_audio_output_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
@@ -167,7 +167,7 @@ impl AudioDataOutput {
     pub fn info(&self) -> Result<AudioDataOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::audio_data_output::av_capture_audio_output_info_json(self.ptr, &mut err)
+            ffi::audio_data_output::av_capture_audio_output_info_json(self.ptr, &raw mut err)
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
@@ -213,7 +213,7 @@ impl AudioDataOutput {
             ffi::audio_data_output::av_capture_audio_output_set_audio_settings_json(
                 self.ptr,
                 settings.as_ref().map_or(ptr::null(), |json| json.as_ptr()),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -246,7 +246,7 @@ impl AudioDataOutput {
                 userdata,
                 Some(audio_callback_retain),
                 Some(audio_callback_release),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -268,7 +268,7 @@ impl AudioPreviewOutput {
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr =
-            unsafe { ffi::audio_data_output::av_capture_audio_preview_output_create(&mut err) };
+            unsafe { ffi::audio_data_output::av_capture_audio_preview_output_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
@@ -279,7 +279,10 @@ impl AudioPreviewOutput {
     pub fn info(&self) -> Result<AudioPreviewOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::audio_data_output::av_capture_audio_preview_output_info_json(self.ptr, &mut err)
+            ffi::audio_data_output::av_capture_audio_preview_output_info_json(
+                self.ptr,
+                &raw mut err,
+            )
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });

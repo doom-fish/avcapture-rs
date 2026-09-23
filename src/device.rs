@@ -596,7 +596,7 @@ impl CaptureReactionType {
         let string_ptr = unsafe {
             ffi::device::av_capture_reaction_system_image_name_for_type(
                 reaction_type.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if string_ptr.is_null() {
@@ -830,8 +830,9 @@ impl CaptureDeviceInputSource {
     /// Returns a snapshot of `AVCaptureDeviceInputSource` state.
     pub fn info(&self) -> Result<CaptureDeviceInputSourceInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr =
-            unsafe { ffi::device::av_capture_device_input_source_info_json(self.ptr, &mut err) };
+        let json_ptr = unsafe {
+            ffi::device::av_capture_device_input_source_info_json(self.ptr, &raw mut err)
+        };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
         }
@@ -879,7 +880,7 @@ impl CaptureDeviceRotationCoordinator {
     pub fn info(&self) -> Result<CaptureDeviceRotationCoordinatorInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::device::av_capture_device_rotation_coordinator_info_json(self.ptr, &mut err)
+            ffi::device::av_capture_device_rotation_coordinator_info_json(self.ptr, &raw mut err)
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
@@ -910,8 +911,9 @@ impl CaptureDevice {
     ) -> Result<AuthorizationStatus, AVCaptureError> {
         let media_type = cstring(media_type.as_raw(), "media type")?;
         let mut err: *mut c_char = ptr::null_mut();
-        let raw =
-            unsafe { ffi::device::av_capture_authorization_status(media_type.as_ptr(), &mut err) };
+        let raw = unsafe {
+            ffi::device::av_capture_authorization_status(media_type.as_ptr(), &raw mut err)
+        };
         if raw < 0 {
             return Err(unsafe { from_swift(raw, err) });
         }
@@ -923,7 +925,7 @@ impl CaptureDevice {
         let media_type = cstring(media_type.as_raw(), "media type")?;
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::device::av_capture_devices_json(media_type.as_ptr(), &mut err) };
+            unsafe { ffi::device::av_capture_devices_json(media_type.as_ptr(), &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
         }
@@ -934,7 +936,8 @@ impl CaptureDevice {
     pub fn default(media_type: &MediaType) -> Result<Option<Self>, AVCaptureError> {
         let media_type = cstring(media_type.as_raw(), "media type")?;
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::device::av_capture_default_device(media_type.as_ptr(), &mut err) };
+        let ptr =
+            unsafe { ffi::device::av_capture_default_device(media_type.as_ptr(), &raw mut err) };
         if ptr.is_null() {
             if err.is_null() {
                 return Ok(None);
@@ -962,7 +965,7 @@ impl CaptureDevice {
                     .as_ref()
                     .map_or(ptr::null(), |value| value.as_ptr()),
                 position.as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -980,8 +983,9 @@ impl CaptureDevice {
             AVCaptureError::InvalidArgument(format!("device unique ID contains NUL byte: {error}"))
         })?;
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr =
-            unsafe { ffi::device::av_capture_device_with_unique_id(unique_id.as_ptr(), &mut err) };
+        let ptr = unsafe {
+            ffi::device::av_capture_device_with_unique_id(unique_id.as_ptr(), &raw mut err)
+        };
         if ptr.is_null() {
             if err.is_null() {
                 return Ok(None);
@@ -994,7 +998,7 @@ impl CaptureDevice {
     /// Returns a snapshot of `AVCaptureDevice` state.
     pub fn info(&self) -> Result<CaptureDeviceInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr = unsafe { ffi::device::av_capture_device_info_json(self.ptr, &mut err) };
+        let json_ptr = unsafe { ffi::device::av_capture_device_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
         }
@@ -1004,7 +1008,8 @@ impl CaptureDevice {
     /// Returns the detailed state snapshot for `AVCaptureDevice`.
     pub fn details(&self) -> Result<CaptureDeviceDetails, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr = unsafe { ffi::device::av_capture_device_details_json(self.ptr, &mut err) };
+        let json_ptr =
+            unsafe { ffi::device::av_capture_device_details_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
         }
@@ -1306,7 +1311,7 @@ impl CaptureDevice {
             ffi::device::av_capture_device_perform_reaction_effect(
                 self.ptr,
                 reaction_type.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1323,7 +1328,7 @@ impl CaptureDevice {
         let status = unsafe {
             ffi::device::av_capture_device_show_system_user_interface(
                 system_user_interface.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1344,7 +1349,7 @@ impl CaptureDevice {
         for index in 0..count {
             let mut err: *mut c_char = ptr::null_mut();
             let ptr = unsafe {
-                ffi::device::av_capture_device_input_source_at_index(self.ptr, index, &mut err)
+                ffi::device::av_capture_device_input_source_at_index(self.ptr, index, &raw mut err)
             };
             if ptr.is_null() {
                 return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
@@ -1357,7 +1362,8 @@ impl CaptureDevice {
     /// Corresponds to `AVCaptureDevice.active_input_source`.
     pub fn active_input_source(&self) -> Result<Option<CaptureDeviceInputSource>, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::device::av_capture_device_active_input_source(self.ptr, &mut err) };
+        let ptr =
+            unsafe { ffi::device::av_capture_device_active_input_source(self.ptr, &raw mut err) };
         if ptr.is_null() {
             if err.is_null() {
                 return Ok(None);
@@ -1375,7 +1381,7 @@ impl CaptureDevice {
     ) -> Result<Option<CaptureDeviceRotationCoordinator>, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
-            ffi::device::av_capture_device_rotation_coordinator_create(self.ptr, &mut err)
+            ffi::device::av_capture_device_rotation_coordinator_create(self.ptr, &raw mut err)
         };
         if ptr.is_null() {
             if err.is_null() {
@@ -1438,7 +1444,7 @@ impl CaptureDevice {
         for index in 0..count {
             let mut err: *mut c_char = ptr::null_mut();
             let ptr = unsafe {
-                ffi::device::av_capture_device_format_at_index(self.ptr, index, &mut err)
+                ffi::device::av_capture_device_format_at_index(self.ptr, index, &raw mut err)
             };
             if ptr.is_null() {
                 return Err(unsafe { from_swift(ffi::status::DEVICE_ERROR, err) });
@@ -1451,7 +1457,7 @@ impl CaptureDevice {
     /// Corresponds to `AVCaptureDevice.active_format`.
     pub fn active_format(&self) -> Result<Option<CaptureDeviceFormat>, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::device::av_capture_device_active_format(self.ptr, &mut err) };
+        let ptr = unsafe { ffi::device::av_capture_device_active_format(self.ptr, &raw mut err) };
         if ptr.is_null() {
             if err.is_null() {
                 return Ok(None);
@@ -1478,8 +1484,9 @@ impl CaptureDevice {
         &self,
     ) -> Result<CaptureDeviceConfigurationLock<'_>, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let status =
-            unsafe { ffi::device::av_capture_device_lock_for_configuration(self.ptr, &mut err) };
+        let status = unsafe {
+            ffi::device::av_capture_device_lock_for_configuration(self.ptr, &raw mut err)
+        };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
         }
@@ -1498,7 +1505,11 @@ impl CaptureDeviceConfigurationLock<'_> {
     pub fn set_active_format(&self, format: &CaptureDeviceFormat) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::device::av_capture_device_set_active_format(self.device.ptr, format.ptr, &mut err)
+            ffi::device::av_capture_device_set_active_format(
+                self.device.ptr,
+                format.ptr,
+                &raw mut err,
+            )
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
@@ -1516,7 +1527,7 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_active_video_min_frame_duration(
                 self.device.ptr,
                 duration,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1535,7 +1546,7 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_active_video_max_frame_duration(
                 self.device.ptr,
                 duration,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1554,7 +1565,7 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_exposure_mode(
                 self.device.ptr,
                 mode.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1570,7 +1581,7 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_focus_mode(
                 self.device.ptr,
                 mode.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1589,7 +1600,7 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_white_balance_mode(
                 self.device.ptr,
                 mode.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1605,7 +1616,7 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_torch_mode(
                 self.device.ptr,
                 mode.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1623,7 +1634,7 @@ impl CaptureDeviceConfigurationLock<'_> {
         }
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::device::av_capture_device_set_torch_level(self.device.ptr, level, &mut err)
+            ffi::device::av_capture_device_set_torch_level(self.device.ptr, level, &raw mut err)
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
@@ -1641,7 +1652,7 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_active_color_space(
                 self.device.ptr,
                 color_space.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1660,7 +1671,7 @@ impl CaptureDeviceConfigurationLock<'_> {
             ffi::device::av_capture_device_set_active_input_source(
                 self.device.ptr,
                 input_source.ptr,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1686,7 +1697,7 @@ impl CaptureDeviceConfigurationLock<'_> {
                 self.device.ptr,
                 mode.into().as_raw(),
                 speed,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1707,7 +1718,7 @@ impl CaptureDeviceConfigurationLock<'_> {
                 self.device.ptr,
                 behavior.into().as_raw(),
                 conditions.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1734,7 +1745,7 @@ impl CaptureDeviceConfigurationLock<'_> {
                     flags: 0,
                     epoch: 0,
                 }),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1757,7 +1768,7 @@ impl CaptureDeviceConfigurationLock<'_> {
                 x,
                 y,
                 focus_mode.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -1780,7 +1791,7 @@ impl CaptureDeviceConfigurationLock<'_> {
                 x,
                 y,
                 focus_mode.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {

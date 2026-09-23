@@ -164,12 +164,12 @@ fn dropped_reason_wrapper_deserializes_known_and_unknown_values() {
 fn audio_preview_output_ffi_smoke() {
     let mut err: *mut c_char = ptr::null_mut();
     let output_ptr =
-        unsafe { ffi::audio_data_output::av_capture_audio_preview_output_create(&mut err) };
+        unsafe { ffi::audio_data_output::av_capture_audio_preview_output_create(&raw mut err) };
     assert!(err.is_null(), "unexpected create error: {err:?}");
     assert!(!output_ptr.is_null());
 
     let info_json = unsafe {
-        ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &mut err)
+        ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &raw mut err)
     };
     assert!(err.is_null(), "unexpected info error: {err:?}");
     let info: RawAudioPreviewOutputInfo = unsafe { decode_json(info_json) };
@@ -187,7 +187,7 @@ fn audio_preview_output_ffi_smoke() {
     }
 
     let updated_json = unsafe {
-        ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &mut err)
+        ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &raw mut err)
     };
     assert!(err.is_null(), "unexpected updated info error: {err:?}");
     let updated: RawAudioPreviewOutputInfo = unsafe { decode_json(updated_json) };
@@ -198,7 +198,7 @@ fn audio_preview_output_ffi_smoke() {
     assert!((updated.volume - 0.25).abs() < f32::EPSILON * 8.0);
 
     let output_info_json =
-        unsafe { ffi::output::av_capture_output_info_json(output_ptr, &mut err) };
+        unsafe { ffi::output::av_capture_output_info_json(output_ptr, &raw mut err) };
     assert!(err.is_null(), "unexpected generic info error: {err:?}");
     let output_info: RawCaptureOutputInfo = unsafe { decode_json(output_info_json) };
     assert_eq!(output_info.connection_count, updated.connection_count);
@@ -213,7 +213,7 @@ fn audio_preview_output_ffi_smoke() {
         );
     }
     let cleared_json = unsafe {
-        ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &mut err)
+        ffi::audio_data_output::av_capture_audio_preview_output_info_json(output_ptr, &raw mut err)
     };
     assert!(err.is_null(), "unexpected cleared info error: {err:?}");
     let cleared: RawAudioPreviewOutputInfo = unsafe { decode_json(cleared_json) };

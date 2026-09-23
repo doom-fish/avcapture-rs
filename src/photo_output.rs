@@ -180,7 +180,7 @@ impl PhotoOutput {
     /// Creates a new `AVCapturePhotoOutput` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::photo_output::av_capture_photo_output_create(&mut err) };
+        let ptr = unsafe { ffi::photo_output::av_capture_photo_output_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
@@ -191,7 +191,7 @@ impl PhotoOutput {
     pub fn info(&self) -> Result<PhotoOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::photo_output::av_capture_photo_output_info_json(self.ptr, &mut err) };
+            unsafe { ffi::photo_output::av_capture_photo_output_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
@@ -286,7 +286,7 @@ impl PhotoOutput {
             ffi::photo_output::av_capture_photo_output_set_max_photo_quality_prioritization(
                 self.ptr,
                 prioritization.as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -300,7 +300,9 @@ impl PhotoOutput {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::photo_output::av_capture_photo_output_set_responsive_capture_enabled(
-                self.ptr, enabled, &mut err,
+                self.ptr,
+                enabled,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -357,7 +359,7 @@ impl PhotoOutput {
                 userdata,
                 Some(photo_capture_event_callback_retain),
                 Some(photo_capture_event_callback_release),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -391,7 +393,8 @@ impl PhotoOutputReadinessCoordinator {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
             ffi::photo_output::av_capture_photo_output_readiness_coordinator_create(
-                output.ptr, &mut err,
+                output.ptr,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -406,7 +409,9 @@ impl PhotoOutputReadinessCoordinator {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::photo_output::av_capture_photo_output_readiness_coordinator_capture_readiness(
-                self.ptr, &mut raw, &mut err,
+                self.ptr,
+                &raw mut raw,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -430,7 +435,7 @@ impl PhotoOutputReadinessCoordinator {
                 userdata,
                 Some(photo_output_readiness_callback_retain),
                 Some(photo_output_readiness_callback_release),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -458,7 +463,7 @@ impl PhotoOutputReadinessCoordinator {
             ffi::photo_output::av_capture_photo_output_readiness_coordinator_start_tracking_capture_request(
                 self.ptr,
                 settings.ptr,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -477,7 +482,7 @@ impl PhotoOutputReadinessCoordinator {
             ffi::photo_output::av_capture_photo_output_readiness_coordinator_stop_tracking_capture_request(
                 self.ptr,
                 settings_unique_id,
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {

@@ -141,7 +141,7 @@ pub unsafe fn output_info_from_ptr(
     ptr_value: *mut c_void,
 ) -> Result<CaptureOutputInfo, AVCaptureError> {
     let mut err: *mut c_char = ptr::null_mut();
-    let json_ptr = unsafe { ffi::output::av_capture_output_info_json(ptr_value, &mut err) };
+    let json_ptr = unsafe { ffi::output::av_capture_output_info_json(ptr_value, &raw mut err) };
     if json_ptr.is_null() {
         return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
     }
@@ -159,7 +159,7 @@ pub unsafe fn connections_from_output_ptr(
     for index in 0..count {
         let mut err: *mut c_char = ptr::null_mut();
         let connection_ptr = unsafe {
-            ffi::output::av_capture_output_connection_at_index(ptr_value, index, &mut err)
+            ffi::output::av_capture_output_connection_at_index(ptr_value, index, &raw mut err)
         };
         if connection_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
@@ -182,7 +182,7 @@ pub unsafe fn connection_from_output_ptr(
         ffi::output::av_capture_output_connection_for_media_type(
             ptr_value,
             media_type.as_ptr(),
-            &mut err,
+            &raw mut err,
         )
     };
     if connection_ptr.is_null() {

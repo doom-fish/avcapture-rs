@@ -137,7 +137,7 @@ fn movie_file_output_smoke() -> common::TestResult {
 fn audio_file_output_ffi_smoke() -> common::TestResult {
     let mut err: *mut c_char = ptr::null_mut();
     let output_ptr =
-        unsafe { ffi::movie_file_output::av_capture_audio_file_output_create(&mut err) };
+        unsafe { ffi::movie_file_output::av_capture_audio_file_output_create(&raw mut err) };
     assert!(err.is_null(), "unexpected create error: {err:?}");
     assert!(!output_ptr.is_null());
 
@@ -150,7 +150,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
         ffi::movie_file_output::av_capture_audio_file_output_set_audio_settings_json(
             output_ptr,
             settings_json.as_ptr(),
-            &mut err,
+            &raw mut err,
         )
     };
     assert_eq!(
@@ -161,7 +161,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
     );
 
     let info_json = unsafe {
-        ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &mut err)
+        ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &raw mut err)
     };
     assert!(err.is_null(), "unexpected info error: {err:?}");
     let info: RawAudioFileOutputInfo = unsafe { decode_json(info_json) };
@@ -181,7 +181,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
     }
 
     let output_info_json =
-        unsafe { ffi::output::av_capture_output_info_json(output_ptr, &mut err) };
+        unsafe { ffi::output::av_capture_output_info_json(output_ptr, &raw mut err) };
     assert!(err.is_null(), "unexpected generic info error: {err:?}");
     let output_info: RawCaptureOutputInfo = unsafe { decode_json(output_info_json) };
     assert_eq!(output_info.connection_count, info.connection_count);
@@ -196,7 +196,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
             ptr::null_mut(),
             None,
             None,
-            &mut err,
+            &raw mut err,
         )
     };
     assert_eq!(
@@ -206,7 +206,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
         unsafe { take_error(err) }
     );
     let boundary_info_json = unsafe {
-        ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &mut err)
+        ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &raw mut err)
     };
     assert!(err.is_null(), "unexpected boundary info error: {err:?}");
     let boundary_info: RawAudioFileOutputInfo = unsafe { decode_json(boundary_info_json) };
@@ -217,7 +217,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
         );
     }
     let cleared_boundary_info_json = unsafe {
-        ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &mut err)
+        ffi::movie_file_output::av_capture_audio_file_output_info_json(output_ptr, &raw mut err)
     };
     assert!(
         err.is_null(),
@@ -245,7 +245,7 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
             ptr::null_mut(),
             None,
             None,
-            &mut err,
+            &raw mut err,
         )
     };
     assert_eq!(status, ffi::status::OUTPUT_ERROR);

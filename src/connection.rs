@@ -82,7 +82,7 @@ impl CaptureAudioChannel {
     pub fn info(&self) -> Result<CaptureAudioChannelInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::connection::av_capture_audio_channel_info_json(self.ptr, &mut err) };
+            unsafe { ffi::connection::av_capture_audio_channel_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -118,7 +118,7 @@ impl CaptureAudioChannel {
         }
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::connection::av_capture_audio_channel_set_volume(self.ptr, volume, &mut err)
+            ffi::connection::av_capture_audio_channel_set_volume(self.ptr, volume, &raw mut err)
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
@@ -130,7 +130,7 @@ impl CaptureAudioChannel {
     pub fn set_enabled(&self, enabled: bool) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::connection::av_capture_audio_channel_set_enabled(self.ptr, enabled, &mut err)
+            ffi::connection::av_capture_audio_channel_set_enabled(self.ptr, enabled, &raw mut err)
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
@@ -169,7 +169,7 @@ impl CaptureConnection {
     pub fn info(&self) -> Result<CaptureConnectionInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::connection::av_capture_connection_info_json(self.ptr, &mut err) };
+            unsafe { ffi::connection::av_capture_connection_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -255,7 +255,9 @@ impl CaptureConnection {
             let mut err: *mut c_char = ptr::null_mut();
             let ptr = unsafe {
                 ffi::connection::av_capture_connection_audio_channel_at_index(
-                    self.ptr, index, &mut err,
+                    self.ptr,
+                    index,
+                    &raw mut err,
                 )
             };
             if ptr.is_null() {
@@ -284,7 +286,11 @@ impl CaptureConnection {
     pub fn set_video_mirrored(&self, mirrored: bool) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::connection::av_capture_connection_set_video_mirrored(self.ptr, mirrored, &mut err)
+            ffi::connection::av_capture_connection_set_video_mirrored(
+                self.ptr,
+                mirrored,
+                &raw mut err,
+            )
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
@@ -303,7 +309,9 @@ impl CaptureConnection {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::connection::av_capture_connection_set_video_rotation_angle(
-                self.ptr, angle, &mut err,
+                self.ptr,
+                angle,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {

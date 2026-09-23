@@ -143,7 +143,7 @@ impl PhotoSettings {
     /// Creates a new `AVCapturePhotoSettings` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::photo::av_capture_photo_settings_create(&mut err) };
+        let ptr = unsafe { ffi::photo::av_capture_photo_settings_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -154,7 +154,7 @@ impl PhotoSettings {
     pub fn copy_with_unique_id(&self) -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr = unsafe {
-            ffi::photo::av_capture_photo_settings_copy_with_unique_id(self.ptr, &mut err)
+            ffi::photo::av_capture_photo_settings_copy_with_unique_id(self.ptr, &raw mut err)
         };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
@@ -166,7 +166,7 @@ impl PhotoSettings {
     pub fn info(&self) -> Result<PhotoSettingsInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::photo::av_capture_photo_settings_info_json(self.ptr, &mut err) };
+            unsafe { ffi::photo::av_capture_photo_settings_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -199,7 +199,11 @@ impl PhotoSettings {
     pub fn set_flash_mode(&self, mode: CaptureFlashMode) -> Result<(), AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
-            ffi::photo::av_capture_photo_settings_set_flash_mode(self.ptr, mode.as_raw(), &mut err)
+            ffi::photo::av_capture_photo_settings_set_flash_mode(
+                self.ptr,
+                mode.as_raw(),
+                &raw mut err,
+            )
         };
         if status != ffi::status::OK {
             return Err(unsafe { from_swift(status, err) });
@@ -217,7 +221,7 @@ impl PhotoSettings {
             ffi::photo::av_capture_photo_settings_set_photo_quality_prioritization(
                 self.ptr,
                 prioritization.as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -256,8 +260,9 @@ impl ResolvedPhotoSettings {
     /// Returns a snapshot of `AVCaptureResolvedPhotoSettings` state.
     pub fn info(&self) -> Result<ResolvedPhotoSettingsInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr =
-            unsafe { ffi::photo::av_capture_resolved_photo_settings_info_json(self.ptr, &mut err) };
+        let json_ptr = unsafe {
+            ffi::photo::av_capture_resolved_photo_settings_info_json(self.ptr, &raw mut err)
+        };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -314,7 +319,7 @@ impl Photo {
     /// Returns a snapshot of `AVCapturePhoto` state.
     pub fn info(&self) -> Result<PhotoInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let json_ptr = unsafe { ffi::photo::av_capture_photo_info_json(self.ptr, &mut err) };
+        let json_ptr = unsafe { ffi::photo::av_capture_photo_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }
@@ -345,7 +350,8 @@ impl Photo {
     #[allow(unused_unsafe)]
     pub fn pixel_buffer(&self) -> Result<Option<CVPixelBuffer>, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let pixel_buffer = unsafe { ffi::photo::av_capture_photo_pixel_buffer(self.ptr, &mut err) };
+        let pixel_buffer =
+            unsafe { ffi::photo::av_capture_photo_pixel_buffer(self.ptr, &raw mut err) };
         if pixel_buffer.is_null() {
             if err.is_null() {
                 return Ok(None);
@@ -360,7 +366,11 @@ impl Photo {
         let mut length = 0_usize;
         let mut err: *mut c_char = ptr::null_mut();
         let bytes = unsafe {
-            ffi::photo::av_capture_photo_file_data_representation(self.ptr, &mut length, &mut err)
+            ffi::photo::av_capture_photo_file_data_representation(
+                self.ptr,
+                &raw mut length,
+                &raw mut err,
+            )
         };
         if bytes.is_null() {
             if err.is_null() {
@@ -381,7 +391,7 @@ impl Photo {
     /// Corresponds to `AVCapturePhoto.resolved_settings`.
     pub fn resolved_settings(&self) -> Result<ResolvedPhotoSettings, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::photo::av_capture_photo_resolved_settings(self.ptr, &mut err) };
+        let ptr = unsafe { ffi::photo::av_capture_photo_resolved_settings(self.ptr, &raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OPERATION_FAILED, err) });
         }

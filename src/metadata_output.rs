@@ -79,7 +79,7 @@ impl MetadataOutput {
     /// Creates a new `AVCaptureMetadataOutput` wrapper.
     pub fn new() -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
-        let ptr = unsafe { ffi::metadata_output::av_capture_metadata_output_create(&mut err) };
+        let ptr = unsafe { ffi::metadata_output::av_capture_metadata_output_create(&raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
         }
@@ -90,7 +90,7 @@ impl MetadataOutput {
     pub fn info(&self) -> Result<MetadataOutputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr = unsafe {
-            ffi::metadata_output::av_capture_metadata_output_info_json(self.ptr, &mut err)
+            ffi::metadata_output::av_capture_metadata_output_info_json(self.ptr, &raw mut err)
         };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::OUTPUT_ERROR, err) });
@@ -154,7 +154,7 @@ impl MetadataOutput {
             ffi::metadata_output::av_capture_metadata_output_set_metadata_object_types_json(
                 self.ptr,
                 json.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -171,7 +171,7 @@ impl MetadataOutput {
             ffi::metadata_output::av_capture_metadata_output_set_rect_of_interest_json(
                 self.ptr,
                 json.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -204,7 +204,7 @@ impl MetadataOutput {
                 userdata,
                 Some(metadata_callback_retain),
                 Some(metadata_callback_release),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {

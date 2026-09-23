@@ -71,7 +71,7 @@ pub unsafe fn input_info_from_ptr(
     ptr_value: *mut c_void,
 ) -> Result<CaptureInputInfo, AVCaptureError> {
     let mut err: *mut c_char = ptr::null_mut();
-    let json_ptr = unsafe { ffi::input::av_capture_input_info_json(ptr_value, &mut err) };
+    let json_ptr = unsafe { ffi::input::av_capture_input_info_json(ptr_value, &raw mut err) };
     if json_ptr.is_null() {
         return Err(unsafe { from_swift(ffi::status::INPUT_ERROR, err) });
     }

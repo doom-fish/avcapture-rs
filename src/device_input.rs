@@ -108,7 +108,7 @@ impl DeviceInput {
     pub fn new(device: &CaptureDevice) -> Result<Self, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let ptr =
-            unsafe { ffi::device_input::av_capture_device_input_create(device.ptr, &mut err) };
+            unsafe { ffi::device_input::av_capture_device_input_create(device.ptr, &raw mut err) };
         if ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::INPUT_ERROR, err) });
         }
@@ -119,7 +119,7 @@ impl DeviceInput {
     pub fn info(&self) -> Result<DeviceInputInfo, AVCaptureError> {
         let mut err: *mut c_char = ptr::null_mut();
         let json_ptr =
-            unsafe { ffi::device_input::av_capture_device_input_info_json(self.ptr, &mut err) };
+            unsafe { ffi::device_input::av_capture_device_input_info_json(self.ptr, &raw mut err) };
         if json_ptr.is_null() {
             return Err(unsafe { from_swift(ffi::status::INPUT_ERROR, err) });
         }
@@ -181,7 +181,7 @@ impl DeviceInput {
             ffi::device_input::av_capture_device_input_set_multichannel_audio_mode(
                 self.ptr,
                 mode.into().as_raw(),
-                &mut err,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {
@@ -195,7 +195,9 @@ impl DeviceInput {
         let mut err: *mut c_char = ptr::null_mut();
         let status = unsafe {
             ffi::device_input::av_capture_device_input_set_wind_noise_removal_enabled(
-                self.ptr, enabled, &mut err,
+                self.ptr,
+                enabled,
+                &raw mut err,
             )
         };
         if status != ffi::status::OK {

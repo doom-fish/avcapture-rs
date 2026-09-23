@@ -55,7 +55,7 @@ impl CaptureDeviceDiscoverySession {
         let ptr = unsafe {
             ffi::device_discovery_session::av_capture_device_discovery_session_create(
                 json.as_ptr(),
-                &mut err,
+                &raw mut err,
             )
         };
         if ptr.is_null() {
@@ -76,7 +76,9 @@ impl CaptureDeviceDiscoverySession {
             let mut err: *mut c_char = ptr::null_mut();
             let ptr = unsafe {
                 ffi::device_discovery_session::av_capture_device_discovery_session_device_at_index(
-                    self.ptr, index, &mut err,
+                    self.ptr,
+                    index,
+                    &raw mut err,
                 )
             };
             if ptr.is_null() {
