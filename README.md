@@ -27,14 +27,16 @@ See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
 
 ## Installation
 
-```bash
-cargo add avcapture
+```toml
+[dependencies]
+avcapture = "0.7"
 ```
 
 Enable executor-agnostic async future/stream adapters with:
 
-```bash
-cargo add avcapture --features async
+```toml
+[dependencies]
+avcapture = { version = "0.7", features = ["async"] }
 ```
 
 ## Async API

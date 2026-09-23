@@ -1,5 +1,46 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.7.0] - Unreleased
+
+### Fixed
+
+- Safe calls that passed values to AVFoundation APIs raising Objective-C exceptions, which Swift cannot catch, aborted the process. They now return `AVCaptureError::InvalidArgument` or `AVCaptureError::InvalidState`:
+  - `CaptureDeviceConfigurationLock::set_active_format` with a format of another device.
+  - `set_active_video_min_frame_duration` and `set_active_video_max_frame_duration` outside the active format's supported frame rate ranges, with an indefinite or infinite time, or while auto video frame rate is enabled.
+  - `set_active_color_space` with a color space the active format does not support.
+  - `set_torch_level` with a level that is not in (0, 1] and is not the maximum available torch level.
+  - `set_camera_lens_smudge_detection` on a format without smudge detection, including when disabling it.
+  - `PhotoOutput::capture_photo` and `capture_photo_with_settings` with a flash mode the output does not support (for example `Auto` on a Mac camera without a flash), a quality prioritization above the output's maximum, or without an active and enabled video connection; `PhotoOutputReadinessCoordinator::start_tracking_capture_request` with such settings or with settings already used for capture. Rejected settings are no longer consumed.
+  - `CaptureSession::start_running` and `stop_running` between `begin_configuration` and `commit_configuration`.
+  - On macOS 26 and later, `start_running` and the outermost `commit_configuration` when audio data outputs break the first-order ambisonics channel-layout rules of `AVCaptureAudioDataOutput.h`.
+  - `MovieFileOutput::set_spatial_video_capture_enabled(true)` while a source device has a locked frame duration or follows an external sync device (macOS 26).
+- The active format, frame duration, photo capture and readiness tracking calls also run inside an Objective-C `@try/@catch` backstop, so a condition that changes between the check and the call becomes an error instead of an abort.
+- `CaptureSession::start_running` and `stop_running` no longer block the main thread. Because `CaptureSession` is not `Send`, a session created on the main thread could not be started without blocking it.
+- `set_active_input_source` applies the device's own input source object.
+- Smoke tests that asserted nothing now check their results, and the device-input test skips unless access was already granted, so the test suite never prompts for consent. The example smoke test that could reconfigure an attached external display is ignored by default, and no test writes outside `target/`.
+- Docs: the README states the macOS 12 minimum and the consent requirements; `COVERAGE*.md` explain that the audits count declarations rather than members, list known gaps and the macOS 27 additions, and no longer count two macOS-unavailable delegates and the deprecated still image output as verified or the macOS 14 readiness coordinator delegate as iOS-only.
+
+### Changed
+
+- **BREAKING:** `CaptureSession::commit_configuration`, `start_running` and `stop_running` return `Result<(), AVCaptureError>`. A commit without a matching begin returns `InvalidState`.
+- **BREAKING:** on the main thread, `start_running` and `stop_running` schedule the transition on the session's serial queue and return before it finishes; elsewhere they still block until it has finished.
+- **BREAKING:** the raw exports `av_capture_session_commit_configuration`, `av_capture_session_start_running` and `av_capture_session_stop_running` take an error out-parameter and return a status.
+- **BREAKING:** `AVCaptureError` has new `InvalidState` and `Timeout` variants, and `ffi::status::INVALID_STATE` is new.
+- Setters and captures that used to abort return errors, as listed under Fixed.
+- Requires `apple-cf >=0.11, <0.12` and `doom-fish-utils >=0.4.1, <0.5`; `rust-version` is 1.82 (was 1.76).
+- The Swift bridge package has a second target, `AVCaptureObjCBridge`, for the Objective-C exception backstop.
+
+### Added
+
+- `CaptureDevice::request_access(&MediaType, Duration)` asks for camera or microphone consent and returns `Ok(true)`, `Ok(false)`, or `AVCaptureError::Timeout` when no decision arrives in time.
+- `async_api::RequestAccessFuture::start(&MediaType)` (feature `async`) resolves to the decision.
+- Tests for the new checks, the access-request state, the session configuration state machine, main-thread session scheduling, and hardware-gated device checks that run only when camera access was already granted.
+
 ## [0.6.0] - 2026-09-07
 
 ### Added
@@ -33,6 +74,10 @@
 - Corrected `fileURL`, `outputFileURL`, `outputDeviceUniqueID`, `uniqueID`, `displayID`, and `availableVideoCVPixelFormatTypes` payload keys and stopped discarding callback decode failures.
 - Validated manual mirroring, metadata type subsets, and single-use photo settings before native exception paths.
 - Replaced the macOS video pixel-format empty stub with `availableVideoPixelFormatTypes`; raw-photo formats are explicitly unsupported on macOS.
+
+## [0.5.1] - 2026-06-06
+
+- Hardened FFI callback lifetimes and panic safety, and fixed use-after-free races in the callback dispose paths.
 
 ## [0.5.0] - 2026-05-20
 
