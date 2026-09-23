@@ -59,7 +59,7 @@ mod async_stream {
         counter.fetch_add(1, Ordering::SeqCst);
     }
 
-    const fn assert_next_item<T>(_: doom_fish_utils::stream::NextItem<'_, T>) {}
+    fn assert_next_item<T>(_: doom_fish_utils::stream::NextItem<'_, T>) {}
 
     fn assert_future_result<T, U>(_: T)
     where

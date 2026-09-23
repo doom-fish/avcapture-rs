@@ -43,16 +43,13 @@ default = []
 async = []
 
 [dependencies]
-apple-cf = { version = ">=0.10, <0.11", default-features = false, features = ["cv", "cm"] }
+apple-cf = { path = "../apple-cf-rs", version = ">=0.11, <0.12", default-features = false, features = ["cv", "cm"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-doom-fish-utils = { path = "../doom-fish-utils", version = ">=0.4, <0.5" }
+doom-fish-utils = { path = "../doom-fish-utils", version = ">=0.4.1, <0.5" }
 
 [dev-dependencies]
 pollster = "0.3"
-
-[patch.crates-io]
-doom-fish-utils = { path = "../doom-fish-utils" }
 
 [package.metadata.docs.rs]
 all-features = true
