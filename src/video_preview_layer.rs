@@ -499,7 +499,7 @@ mod tests {
 
         assert_eq!(info.frame, CaptureRect::new(10.0, 20.0, 640.0, 360.0));
         assert_eq!(info.bounds, CaptureRect::new(0.0, 0.0, 640.0, 360.0));
-        assert_eq!(info.contents_scale, 2.0);
+        assert!((info.contents_scale - 2.0).abs() < f64::EPSILON);
         assert!(info.has_superlayer);
     }
 }

@@ -1061,7 +1061,7 @@ impl_stream_common!(AudioSampleBufferStream, AudioSampleBufferEvent);
 #[derive(Debug)]
 /// Async stream of events sourced from `AVCaptureMovieFileOutput`.
 pub struct FileRecordingStream {
-    _handle: StreamHandle,
+    handle: StreamHandle,
     inner: BoundedAsyncStream<FileRecordingStreamEvent>,
 }
 
@@ -1103,7 +1103,7 @@ impl FileRecordingStream {
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(Self {
-            _handle: StreamHandle::new(handle_ptr, stop_file_recording),
+            handle: StreamHandle::new(handle_ptr, stop_file_recording),
             inner,
         })
     }
@@ -1111,7 +1111,7 @@ impl FileRecordingStream {
     /// Requests stop and waits for the native finalization callback.
     pub async fn stop_and_finalize(self) -> Result<FileRecordingStreamEvent, AVCaptureError> {
         unsafe {
-            ffi::async_stream::avcapture_file_recording_stream_request_stop(self._handle.ptr);
+            ffi::async_stream::avcapture_file_recording_stream_request_stop(self.handle.ptr);
         }
         while let Some(event) = self.inner.next().await {
             if event.kind == FileRecordingKind::Finished {
@@ -1132,7 +1132,7 @@ impl_stream_common!(FileRecordingStream, FileRecordingStreamEvent);
 #[derive(Debug)]
 /// Async stream of events sourced from `AVCaptureAudioFileOutput`.
 pub struct AudioFileRecordingStream {
-    _handle: StreamHandle,
+    handle: StreamHandle,
     inner: BoundedAsyncStream<FileRecordingStreamEvent>,
 }
 
@@ -1184,7 +1184,7 @@ impl AudioFileRecordingStream {
             return Err(unsafe { from_swift(status, err) });
         }
         Ok(Self {
-            _handle: StreamHandle::new(handle_ptr, stop_audio_file_recording),
+            handle: StreamHandle::new(handle_ptr, stop_audio_file_recording),
             inner,
         })
     }
@@ -1192,7 +1192,7 @@ impl AudioFileRecordingStream {
     /// Requests stop and waits for the native finalization callback.
     pub async fn stop_and_finalize(self) -> Result<FileRecordingStreamEvent, AVCaptureError> {
         unsafe {
-            ffi::async_stream::avcapture_audio_file_recording_stream_request_stop(self._handle.ptr);
+            ffi::async_stream::avcapture_audio_file_recording_stream_request_stop(self.handle.ptr);
         }
         while let Some(event) = self.inner.next().await {
             if event.kind == FileRecordingKind::Finished {

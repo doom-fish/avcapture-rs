@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-pub(crate) struct ArcContext<T>(Arc<T>);
+pub struct ArcContext<T>(Arc<T>);
 
 impl<T> ArcContext<T> {
     pub(crate) fn new(value: T) -> Self {
@@ -40,7 +40,7 @@ struct SerializedCallbackInner<T> {
     dispatching: bool,
 }
 
-pub(crate) struct SerializedCallback<T> {
+pub struct SerializedCallback<T> {
     inner: Mutex<SerializedCallbackInner<T>>,
 }
 
@@ -82,14 +82,12 @@ impl<T> SerializedCallback<T> {
                     .inner
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                match inner.queued.pop_front() {
-                    Some(event) => Some(event),
-                    None => {
-                        inner.callback = callback.take();
-                        inner.dispatching = false;
-                        None
-                    }
+                let next = inner.queued.pop_front();
+                if next.is_none() {
+                    inner.callback = callback.take();
+                    inner.dispatching = false;
                 }
+                next
             };
 
             let Some(event) = next else {

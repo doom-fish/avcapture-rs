@@ -119,6 +119,7 @@ impl CameraCalibrationData {
     ///
     /// `ptr` must be a live `CameraCalibrationDataBox` returned at +1 by a compatible
     /// AVCapture Swift bridge. It is not a native `AVCameraCalibrationData` pointer.
+    #[allow(clippy::doc_markdown)]
     #[must_use]
     pub const unsafe fn from_retained_bridge_box(ptr: *mut c_void) -> Self {
         Self { ptr }

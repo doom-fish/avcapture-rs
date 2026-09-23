@@ -76,7 +76,7 @@ pub struct CallbackDiagnostic {
 
 static CALLBACK_DIAGNOSTICS: OnceLock<Mutex<VecDeque<CallbackDiagnostic>>> = OnceLock::new();
 
-pub(crate) fn report_callback_error(source: &'static str, error: AVCaptureError) {
+pub fn report_callback_error(source: &'static str, error: AVCaptureError) {
     eprintln!("avcapture callback error in {source}: {error}");
     let diagnostics = CALLBACK_DIAGNOSTICS.get_or_init(|| Mutex::new(VecDeque::new()));
     let mut diagnostics = diagnostics

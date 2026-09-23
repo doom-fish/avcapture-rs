@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::error::AVCaptureError;
 use crate::ffi;
 
-pub(crate) const BRIDGE_SCHEMA_VERSION: u64 = 1;
+pub const BRIDGE_SCHEMA_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,7 +137,7 @@ pub fn parse_json_and_free<T: DeserializeOwned>(
     parse_bridge_json(&json)
 }
 
-pub(crate) fn parse_bridge_json<T: DeserializeOwned>(json: &str) -> Result<T, AVCaptureError> {
+pub fn parse_bridge_json<T: DeserializeOwned>(json: &str) -> Result<T, AVCaptureError> {
     let value = serde_json::from_str::<serde_json::Value>(json).map_err(|error| {
         AVCaptureError::BridgeProtocol(format!("failed to decode bridge JSON: {error}"))
     })?;

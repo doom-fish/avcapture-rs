@@ -4,6 +4,12 @@
 
 #[cfg(feature = "async")]
 mod async_stream {
+    #![allow(
+        clippy::items_after_statements,
+        clippy::missing_const_for_fn,
+        clippy::too_many_lines
+    )]
+
     use core::ffi::{c_char, c_void};
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};

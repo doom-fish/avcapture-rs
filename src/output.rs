@@ -12,7 +12,7 @@ use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
 use crate::helpers::{cstring, parse_json_and_free};
 
-pub(crate) mod sealed {
+pub mod sealed {
     pub trait Sealed {}
 }
 
@@ -137,7 +137,7 @@ pub trait CaptureOutputRef: sealed::Sealed {
 /// # Safety
 ///
 /// `ptr_value` must be a live borrowed `CaptureOutputBoxBase` handle produced by this bridge.
-pub(crate) unsafe fn output_info_from_ptr(
+pub unsafe fn output_info_from_ptr(
     ptr_value: *mut c_void,
 ) -> Result<CaptureOutputInfo, AVCaptureError> {
     let mut err: *mut c_char = ptr::null_mut();
@@ -151,7 +151,7 @@ pub(crate) unsafe fn output_info_from_ptr(
 /// # Safety
 ///
 /// `ptr_value` must be a live borrowed `CaptureOutputBoxBase` handle produced by this bridge.
-pub(crate) unsafe fn connections_from_output_ptr(
+pub unsafe fn connections_from_output_ptr(
     ptr_value: *mut c_void,
 ) -> Result<Vec<CaptureConnection>, AVCaptureError> {
     let count = unsafe { ffi::output::av_capture_output_connections_count(ptr_value) };
@@ -172,7 +172,7 @@ pub(crate) unsafe fn connections_from_output_ptr(
 /// # Safety
 ///
 /// `ptr_value` must be a live borrowed `CaptureOutputBoxBase` handle produced by this bridge.
-pub(crate) unsafe fn connection_from_output_ptr(
+pub unsafe fn connection_from_output_ptr(
     ptr_value: *mut c_void,
     media_type: &MediaType,
 ) -> Result<Option<CaptureConnection>, AVCaptureError> {

@@ -9,7 +9,7 @@ use crate::error::{from_swift, AVCaptureError};
 use crate::ffi;
 use crate::helpers::parse_json_and_free;
 
-pub(crate) mod sealed {
+pub mod sealed {
     pub trait Sealed {}
 }
 
@@ -67,7 +67,7 @@ pub trait CaptureInputRef: sealed::Sealed {
 /// # Safety
 ///
 /// `ptr_value` must be a live borrowed `CaptureInputBoxBase` handle produced by this bridge.
-pub(crate) unsafe fn input_info_from_ptr(
+pub unsafe fn input_info_from_ptr(
     ptr_value: *mut c_void,
 ) -> Result<CaptureInputInfo, AVCaptureError> {
     let mut err: *mut c_char = ptr::null_mut();

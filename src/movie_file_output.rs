@@ -804,7 +804,7 @@ where
     Ok(())
 }
 
-pub(crate) fn output_path_bytes<P: AsRef<Path>>(
+pub fn output_path_bytes<P: AsRef<Path>>(
     output_path: P,
     what: &str,
 ) -> Result<Vec<u8>, AVCaptureError> {
