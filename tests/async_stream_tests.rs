@@ -152,13 +152,10 @@ mod async_stream {
 
     fn check_video_sample_stream_api(output: &avcapture::VideoDataOutput) {
         let s: VideoSampleBufferStream = VideoSampleBufferStream::subscribe(output, 8);
-        let _ = s.buffered_count();
-        if let Some(event) = s.try_next() {
-            let _sample = event.sample_buffer;
-            let _pixel = event.pixel_buffer;
-        }
+        assert_eq!(s.buffered_count(), 0);
+        assert!(s.try_next().is_none());
         assert_next_item(s.next());
-        let _ = s.is_closed();
+        assert!(!s.is_closed());
     }
 
     fn assert_legacy_video_event_fields(event: VideoSampleBufferEvent) {
@@ -167,23 +164,21 @@ mod async_stream {
     }
 
     fn check_audio_sample_stream_api(output: &avcapture::AudioDataOutput) {
-        let Ok(s) = AudioSampleBufferStream::subscribe(output, 8) else {
-            return;
-        };
-        let _ = s.buffered_count();
-        let _ = s.try_next();
+        let s = AudioSampleBufferStream::subscribe(output, 8)
+            .expect("a fresh audio data output should accept a stream");
+        assert_eq!(s.buffered_count(), 0);
+        assert!(s.try_next().is_none());
         assert_next_item(s.next());
-        let _ = s.is_closed();
+        assert!(!s.is_closed());
     }
 
     fn check_metadata_objects_stream_api(output: &avcapture::MetadataOutput) {
-        let Ok(s) = MetadataObjectsStream::subscribe(output, 8) else {
-            return;
-        };
-        let _ = s.buffered_count();
-        let _ = s.try_next();
+        let s = MetadataObjectsStream::subscribe(output, 8)
+            .expect("a fresh metadata output should accept a stream");
+        assert_eq!(s.buffered_count(), 0);
+        assert!(s.try_next().is_none());
         assert_next_item(s.next());
-        let _ = s.is_closed();
+        assert!(!s.is_closed());
     }
 
     fn check_photo_capture_future_api(

@@ -8,6 +8,19 @@ fn device_input_ports_smoke() -> common::TestResult {
         common::skip_no_device("device input ports");
         return Ok(());
     };
+    let media_type = if device.media_types()?.contains(&MediaType::Video) {
+        MediaType::Video
+    } else {
+        MediaType::Audio
+    };
+    let status = CaptureDevice::authorization_status(&media_type)?;
+    if status != AuthorizationStatus::Authorized {
+        common::skip(
+            "device input",
+            format!("{media_type:?} access is {status:?}"),
+        );
+        return Ok(());
+    }
 
     let input = match DeviceInput::new(&device) {
         Ok(input) => input,
