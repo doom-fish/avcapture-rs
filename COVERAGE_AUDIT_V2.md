@@ -1,10 +1,12 @@
 # avcapture-rs coverage audit v2 (vs MacOSX26.2.sdk)
 
 SDK_PUBLIC_SYMBOLS: 73
-VERIFIED: 53
+VERIFIED: 51
 GAPS: 0
-EXEMPT: 20
+EXEMPT: 22
 COVERAGE_PCT: 100.0%
+
+> Corrections (0.7.0): `AVCaptureDataOutputSynchronizerDelegate` and `AVCaptureDepthDataOutputDelegate` were listed as verified although both are unavailable on macOS and have no wrapper, and the deprecated `AVCaptureStillImageOutput` was listed as verified although it is not wrapped; all three are now exempt. `AVCapturePhotoOutputReadinessCoordinatorDelegate` was listed as iOS-only with an unrelated attribute; it is available on macOS 14 and wrapped by `PhotoOutputReadinessCoordinator::set_capture_readiness_handler`, so it is now verified. Like [`COVERAGE_AUDIT.md`](COVERAGE_AUDIT.md), this is a declaration-level count against the macOS 26.2 SDK over a self-selected subset; it does not certify members. See [`COVERAGE.md`](COVERAGE.md) for known gaps.
 
 Audit scope: macOS AVCapture framework subset (AVCaptureSession, AVCaptureDevice, AVCapturePhotoOutput, AVCaptureVideoDataOutput, AVCaptureAudioDataOutput, AVCaptureFileOutput, AVCaptureMetadataOutput, and related classes/protocols). All macOS-available SDK symbols are wrapped via Rust safe APIs in swift-bridge or crate src. The EXEMPT symbols are iOS-only and explicitly unavailable on macOS per their SDK API_UNAVAILABLE(macos) attributes—re-verified against actual headers in MacOSX26.2.sdk.
 
@@ -18,11 +20,9 @@ Audit scope: macOS AVCapture framework subset (AVCaptureSession, AVCaptureDevice
 | AVCaptureAudioPreviewOutput | interface | AVCaptureAudioPreviewOutput.h | AudioPreviewOutput |
 | AVCaptureConnection | interface | AVCaptureSession.h | CaptureConnection |
 | AVCaptureControl | protocol | AVCaptureControl.h | CaptureControl |
-| AVCaptureDataOutputSynchronizerDelegate | protocol | AVCaptureDataOutputSynchronizer.h | Covered by info/callback methods |
-| AVCaptureDepthDataOutputDelegate | protocol | AVCaptureDepthDataOutput.h | Covered by info/callback methods |
 | AVCaptureDeskViewApplication | interface | AVCaptureDeskViewApplication.h | DeskViewApplication |
 | AVCaptureDeskViewApplicationLaunchConfiguration | interface | AVCaptureDeskViewApplication.h | DeskViewApplicationLaunchConfiguration |
-| AVCaptureDevice | interface | AVCaptureDevice.h | CaptureDevice |
+| AVCaptureDevice | interface | AVCaptureDevice.h | CaptureDevice (including `request_access`) |
 | AVCaptureDeviceDiscoverySession | interface | AVCaptureDevice.h | CaptureDeviceDiscoverySession |
 | AVCaptureDeviceFormat | interface | AVCaptureDevice.h | CaptureDeviceFormat |
 | AVCaptureDeviceInput | interface | AVCaptureInput.h | DeviceInput |
@@ -44,6 +44,7 @@ Audit scope: macOS AVCapture framework subset (AVCaptureSession, AVCaptureDevice
 | AVCapturePhotoCaptureDelegate | protocol | AVCapturePhotoOutput.h | PhotoOutput callbacks |
 | AVCapturePhotoOutput | interface | AVCapturePhotoOutput.h | PhotoOutput |
 | AVCapturePhotoOutputReadinessCoordinator | interface | AVCapturePhotoOutput.h | PhotoOutputReadinessCoordinator |
+| AVCapturePhotoOutputReadinessCoordinatorDelegate | protocol | AVCapturePhotoOutput.h | PhotoOutputReadinessCoordinator::set_capture_readiness_handler |
 | AVCapturePhotoSettings | interface | AVCapturePhotoOutput.h | PhotoSettings |
 | AVCaptureReactionEffectState | interface | AVCaptureReactions.h | CaptureReactionEffectState |
 | AVCaptureResolvedPhotoSettings | interface | AVCapturePhotoOutput.h | ResolvedPhotoSettings |
@@ -52,7 +53,6 @@ Audit scope: macOS AVCapture framework subset (AVCaptureSession, AVCaptureDevice
 | AVCaptureSessionControlsDelegate | protocol | AVCaptureSession.h | CaptureSession::set_controls_delegate_handler |
 | AVCaptureSessionDeferredStartDelegate | protocol | AVCaptureSession.h | CaptureSession::set_deferred_start_delegate_handler |
 | AVCaptureSlider | interface | AVCaptureSlider.h | CaptureSlider |
-| AVCaptureStillImageOutput | interface | AVCaptureStillImageOutput.h | DEPRECATED on macOS (use PhotoOutput) |
 | AVCaptureSystemExposureBiasSlider | interface | AVCaptureSystemExposureBiasSlider.h | CaptureSystemExposureBiasSlider |
 | AVCaptureSystemZoomSlider | interface | AVCaptureSystemZoomSlider.h | CaptureSystemZoomSlider |
 | AVCaptureTimecodeGenerator | interface | AVCaptureTimecodeGenerator.h | CaptureTimecodeGenerator |
@@ -74,7 +74,9 @@ _None. All macOS-available public AVCapture symbols are wrapped by avcapture-rs.
 | AVCaptureAutoExposureBracketedStillImageSettings | interface | AVCaptureStillImageOutput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(8.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureBracketedStillImageSettings | interface | AVCaptureStillImageOutput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(8.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureDataOutputSynchronizer | interface | AVCaptureDataOutputSynchronizer.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(11.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
+| AVCaptureDataOutputSynchronizerDelegate | protocol | AVCaptureDataOutputSynchronizer.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(11.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureDeferredPhotoProxy | interface | AVCapturePhotoOutput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(17.0)) API_UNAVAILABLE(macos, macCatalyst, tvos, visionos) API_UNAVAILABLE(watchos) |
+| AVCaptureDepthDataOutputDelegate | protocol | AVCaptureDepthDataOutput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(11.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureDepthDataOutput | interface | AVCaptureDepthDataOutput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(11.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureFraming | interface | AVCaptureDevice.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(26.0)) API_UNAVAILABLE(macos, macCatalyst, tvos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureManualExposureBracketedStillImageSettings | interface | AVCaptureStillImageOutput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(8.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
@@ -82,9 +84,9 @@ _None. All macOS-available public AVCapture symbols are wrapped by avcapture-rs.
 | AVCaptureMultiCamSession | interface | AVCaptureSession.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(13.0), macCatalyst(14.0), tvos(17.0), visionos(2.1)) API_UNAVAILABLE(macos) API_UNAVAILABLE(watchos) |
 | AVCapturePhotoBracketSettings | interface | AVCapturePhotoOutput.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(10.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCapturePhotoFileDataRepresentationCustomizer | protocol | AVCapturePhotoOutput.h | Unavailable on macOS; the crate exposes the supported no-customizer file representation | API_AVAILABLE(ios(12.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
-| AVCapturePhotoOutputReadinessCoordinatorDelegate | protocol | AVCapturePhotoOutput.h | iOS-only (unavailable on macOS) | @property(nonatomic, getter=isCameraSensorOrientationCompensationEnabled) BOOL cameraSensorOrientationCompensationEnabled API_AVAILABLE(ios(26.0)) API_UNAVAILABLE(macos, macCatalyst, tvos, visionos) API_UNAVAILABLE(watchos); |
 | AVCaptureSmartFramingMonitor | interface | AVCaptureDevice.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(26.0)) API_UNAVAILABLE(macos, macCatalyst, tvos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureSpatialAudioMetadataSampleGenerator | interface | AVCaptureSpatialAudioMetadataSampleGenerator.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(26.0)) API_UNAVAILABLE(macos, macCatalyst, tvos, visionos) API_UNAVAILABLE(watchos) |
+| AVCaptureStillImageOutput | interface | AVCaptureStillImageOutput.h | Deprecated on macOS (use AVCapturePhotoOutput) | API_DEPRECATED("Use AVCapturePhotoOutput instead.", macos(10.7, 10.15), ios(4.0, 10.0)) API_UNAVAILABLE(visionos) API_UNAVAILABLE(tvos, watchos) |
 | AVCaptureSynchronizedData | interface | AVCaptureDataOutputSynchronizer.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(11.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureSynchronizedDataCollection | interface | AVCaptureDataOutputSynchronizer.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(11.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |
 | AVCaptureSynchronizedDepthData | interface | AVCaptureDataOutputSynchronizer.h | iOS-only (unavailable on macOS) | API_AVAILABLE(ios(11.0), macCatalyst(14.0), tvos(17.0)) API_UNAVAILABLE(macos, visionos) API_UNAVAILABLE(watchos) |

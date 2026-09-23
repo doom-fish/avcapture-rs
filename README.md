@@ -12,11 +12,18 @@ Safe Rust bindings for Apple's `AVCapture` stack on macOS.
 - Recording destinations are never recursively deleted: the default is atomic no-overwrite finalization, with explicit opt-in replacement limited to regular files.
 - Callback and stream delegate slots are exclusive and identity-checked. Competing registrations return `AVCaptureError::DelegateSlotOccupied` instead of silently replacing one another.
 - Rust/Swift JSON uses a validated versioned envelope, preserves acronym keys such as `fileURL`, `outputFileURL`, and `outputDeviceUniqueID`, and reports callback decode failures through `take_callback_diagnostics()`.
+- Values that `AVFoundation` rejects by raising an Objective-C exception (a format of another device, a frame duration outside the supported ranges, an unsupported color space or flash mode, a quality prioritization above the output's maximum, starting a session inside a configuration block) return `AVCaptureError::InvalidArgument` or `AVCaptureError::InvalidState` instead of aborting the process.
+- `CaptureDevice::request_access` asks for camera or microphone consent and waits with a timeout (`AVCaptureError::Timeout`); `async_api::RequestAccessFuture` is the async form.
 - Photo capture retains completion ownership, treats `PhotoSettings` as single-use, and exposes retained pixel buffers plus the macOS-supported encoded file representation.
 - Video output reports the native macOS pixel-format capability and delivers `didDrop` events with an always-incremented count and optional reason.
 - Headless-safe numbered examples and per-area tests now cover examples `01` through `14`.
 
 See [`COVERAGE.md`](COVERAGE.md) for the detailed surface map.
+
+## Requirements
+
+- macOS 12 or newer. APIs from newer releases are checked at runtime and return an error naming the required macOS version on older systems.
+- Camera and microphone capture need the user's consent. Check `CaptureDevice::authorization_status` and call `CaptureDevice::request_access` before creating device inputs. An app bundle must declare `NSCameraUsageDescription` and `NSMicrophoneUsageDescription` in its `Info.plist`; without them macOS terminates the process when access is requested. Command-line tools are attributed to the app that launched them, such as the terminal.
 
 ## Installation
 
@@ -51,7 +58,7 @@ fn main() -> Result<(), AVCaptureError> {
     if session.can_add_video_data_output(&video_output) {
         session.add_video_data_output(&video_output)?;
     }
-    session.commit_configuration();
+    session.commit_configuration()?;
 
     println!("session info: {:?}", session.info()?);
     Ok(())
@@ -79,6 +86,8 @@ These examples intentionally avoid `startRunning`, and only invoke photo/movie c
 
 ## Notes
 
+- `CaptureSession::start_running` and `stop_running` block the calling thread until the transition finishes, except on the main thread: there the transition is scheduled on the session's serial queue and the call returns at once, so check `is_running()` or subscribe to `SessionRunningStream` for the outcome. Both return `AVCaptureError::InvalidState` between `begin_configuration` and `commit_configuration`, and `commit_configuration` returns it without a matching `begin_configuration`.
+- `CaptureDevice::request_access(media_type, timeout)` returns `Ok(true)` when access is granted, `Ok(false)` when it is denied, and `AVCaptureError::Timeout` when the user has not answered in time. Media types other than audio and video are rejected with `InvalidArgument` without prompting.
 - `MetadataOutput::new()` requires macOS 13.0 or newer at runtime.
 - `PhotoOutput` capability arrays are often empty until the output is attached to a session with a video source.
 - Raw-photo pixel-format capability is represented as `None` on macOS rather than as a fabricated empty list.

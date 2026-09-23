@@ -1,5 +1,7 @@
 # avcapture-rs coverage audit (vs MacOSX26.2.sdk)
 
+> Measurement note (0.7.0): this audit counts top-level declarations only. A class row marked VERIFIED means the crate wraps the class, not every member of it: `AVCaptureDevice` was verified while `requestAccessForMediaType:` was missing until 0.7.0. It was generated against the macOS 26.2 SDK and not regenerated for the installed 26.5 and 27.0 SDKs; [`COVERAGE.md`](COVERAGE.md) lists the known member gaps and the macOS 27 additions.
+
 Scope: top-level symbols from `AVCameraCalibrationData.h` and `AVCapture*.h` only (`@interface`, `@protocol`, typedef enums/structs, exported constants, and top-level C functions). Deprecated or `API_UNAVAILABLE(macos)` symbols are EXEMPT. Delegate protocols are counted as VERIFIED when `avcapture-rs` exposes an equivalent Rust callback surface.
 
 SDK_PUBLIC_SYMBOLS: 113
@@ -14,7 +16,7 @@ COVERAGE_PCT: 100.0%
 | AVCameraCalibrationData | interface | AVCameraCalibrationData.h | CameraCalibrationData / CameraCalibrationDataInfo |
 | AVCaptureAudioDataOutput | interface | AVCaptureAudioDataOutput.h | AudioDataOutput |
 | AVCaptureAudioDataOutputSampleBufferDelegate | protocol | AVCaptureAudioDataOutput.h | AudioDataOutput::set_sample_buffer_handler |
-| AVCaptureDevice | interface | AVCaptureDevice.h | CaptureDevice / CaptureDeviceInfo / CaptureDeviceDetails |
+| AVCaptureDevice | interface | AVCaptureDevice.h | CaptureDevice / CaptureDeviceInfo / CaptureDeviceDetails / CaptureDevice::{authorization_status, request_access} / async_api::RequestAccessFuture |
 | AVCaptureDeviceDiscoverySession | interface | AVCaptureDevice.h | CaptureDeviceDiscoverySession |
 | AVCaptureDeviceFormat | interface | AVCaptureDevice.h | CaptureDeviceFormat / CaptureDeviceFormatInfo |
 | AVCaptureDevicePosition | enum | AVCaptureDevice.h | CaptureDevicePosition |
