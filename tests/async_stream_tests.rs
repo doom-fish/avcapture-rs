@@ -668,7 +668,7 @@ mod async_stream {
                 )
             };
             assert!(movie_recording.is_null());
-            assert!(!unsafe { take_error(error) }.is_empty());
+            assert_ne!(unsafe { take_error(error) }, "");
             error = core::ptr::null_mut();
 
             let audio_path = std::ffi::CString::new(audio_path.to_string_lossy().into_owned())?;
@@ -684,7 +684,7 @@ mod async_stream {
                 )
             };
             assert!(audio_recording.is_null());
-            assert!(!unsafe { take_error(error) }.is_empty());
+            assert_ne!(unsafe { take_error(error) }, "");
             error = core::ptr::null_mut();
 
             unsafe {
@@ -802,7 +802,7 @@ mod async_stream {
             };
             assert!(handle.is_null());
             assert_eq!(status, avcapture::ffi::status::INVALID_ARGUMENT);
-            assert!(!unsafe { take_error(error) }.is_empty());
+            assert_ne!(unsafe { take_error(error) }, "");
             assert_eq!(drops.load(Ordering::SeqCst), 1);
         }
 
@@ -833,7 +833,7 @@ mod async_stream {
             };
             assert!(handle.is_null());
             assert_eq!(status, avcapture::ffi::status::INVALID_ARGUMENT);
-            assert!(!unsafe { take_error(error) }.is_empty());
+            assert_ne!(unsafe { take_error(error) }, "");
             assert_eq!(drops.load(Ordering::SeqCst), 1);
         }
 

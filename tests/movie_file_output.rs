@@ -171,7 +171,10 @@ fn audio_file_output_ffi_smoke() -> common::TestResult {
     assert!(info.output_file_url.is_none());
     assert!(!info.callback_installed);
     assert!(!info.sample_buffer_boundary_callback_installed);
-    assert!(!info.available_output_file_types.is_empty());
+    assert_ne!(
+        info.available_output_file_types,
+        [] as [std::string::String; 0]
+    );
     if let Some(settings) = info.audio_settings {
         assert_eq!(settings.sample_rate, Some(48_000.0));
         assert_eq!(settings.channel_count, Some(2));

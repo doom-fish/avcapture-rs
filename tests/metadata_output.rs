@@ -26,7 +26,7 @@ fn metadata_output_smoke() -> common::TestResult {
     assert!(!output.callback_installed()?);
 
     let info = output.info()?;
-    assert!(info.metadata_object_types.is_empty());
+    assert_eq!(info.metadata_object_types, [] as [std::string::String; 0]);
     assert_eq!(info.rect_of_interest, CaptureRect::new(0.0, 0.0, 1.0, 1.0));
     Ok(())
 }

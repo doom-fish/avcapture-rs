@@ -21,8 +21,8 @@ fn discovery_session_returns_requested_video_devices() -> common::TestResult {
     let mut unique_ids = HashSet::new();
     for device in &devices {
         let info = device.info()?;
-        assert!(!info.unique_id.is_empty());
-        assert!(!info.localized_name.is_empty());
+        assert_ne!(info.unique_id, "");
+        assert_ne!(info.localized_name, "");
         assert!(
             unique_ids.insert(info.unique_id.clone()),
             "{} was discovered twice",

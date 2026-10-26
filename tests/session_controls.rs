@@ -60,7 +60,7 @@ fn session_controls_surface_smoke() -> common::TestResult {
     assert_eq!(slider_info.value, 0.5);
     assert_eq!(slider_info.min_value, Some(-1.0));
     assert_eq!(slider_info.max_value, Some(1.0));
-    assert!(slider_info.values.is_empty());
+    assert_eq!(slider_info.values, [] as [f32; 0]);
 
     let picker = CaptureSession::index_picker_with_titles(
         "Capture mode",
